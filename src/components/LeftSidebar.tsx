@@ -24,6 +24,29 @@ interface LeftSidebarProps {
   alerts: FacilityAlert[];
 }
 
+/** Matches Alert Feed footer severity tiles (bottom-right panel). */
+const ALERT_COUNT_TONES = {
+  critical: 'bg-red-50 border-red-800 text-red-900',
+  high: 'bg-amber-50 border-amber-800 text-amber-900',
+  medium: 'bg-blue-50 border-blue-800 text-blue-900',
+} as const;
+
+function AlertCountBadge({
+  count,
+  label,
+  tone,
+}: {
+  count: number;
+  label: string;
+  tone: keyof typeof ALERT_COUNT_TONES;
+}) {
+  return (
+    <div className={`px-1.5 py-0.5 border ${ALERT_COUNT_TONES[tone]}`}>
+      <span className="text-xs">{count}</span> {label}
+    </div>
+  );
+}
+
 export function LeftSidebar({ residents, staff, onResidentClick, onStaffClick, currentFloor, searchQuery = '', alerts }: LeftSidebarProps) {
   // Filter residents and staff based on search query (names and IDs only)
   const filteredResidents = searchQuery.trim() !== ''
@@ -77,25 +100,13 @@ export function LeftSidebar({ residents, staff, onResidentClick, onStaffClick, c
       <div className="flex-1 overflow-y-auto">
         {/* Alert Summary */}
         {hasActiveAlerts && (
-          <div className="px-2.5 py-1.5 bg-slate-800 border-b border-slate-900">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-bold text-white uppercase tracking-wide">Alerts</span>
-              <div className="flex gap-1.5 text-[10px] text-white font-mono font-bold tabular-nums">
-                {severityCounts.critical > 0 && (
-                  <div className="px-1.5 py-0.5 bg-red-900 border border-red-950">
-                    <span className="text-xs">{severityCounts.critical}</span> CRIT
-                  </div>
-                )}
-                {severityCounts.high > 0 && (
-                  <div className="px-1.5 py-0.5 bg-amber-800 border border-amber-900">
-                    <span className="text-xs">{severityCounts.high}</span> HIGH
-                  </div>
-                )}
-                {severityCounts.medium > 0 && (
-                  <div className="px-1.5 py-0.5 bg-slate-600 border border-slate-700">
-                    <span className="text-xs">{severityCounts.medium}</span> MED
-                  </div>
-                )}
+          <div className="px-2.5 py-1.5 bg-slate-300 border-b border-slate-400">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-bold text-slate-900 uppercase tracking-wide">Alerts</span>
+              <div className="flex flex-wrap justify-end gap-1 text-[10px] font-mono font-bold tabular-nums">
+                <AlertCountBadge count={severityCounts.critical} label="CRIT" tone="critical" />
+                <AlertCountBadge count={severityCounts.high} label="HIGH" tone="high" />
+                <AlertCountBadge count={severityCounts.medium} label="MED" tone="medium" />
               </div>
             </div>
           </div>
@@ -136,17 +147,17 @@ export function LeftSidebar({ residents, staff, onResidentClick, onStaffClick, c
                       {resident.id} — {resident.name}
                     </span>
                     {alertSeverity === 'critical' && (
-                      <span className="px-1 py-0.5 font-bold leading-none text-[8px] flex-shrink-0 bg-red-800 text-white">
+                      <span className="px-1 py-0.5 font-bold leading-none text-[8px] flex-shrink-0 bg-red-100 border border-red-700 text-red-900">
                         CRIT
                       </span>
                     )}
                     {alertSeverity === 'high' && (
-                      <span className="px-1 py-0.5 font-bold leading-none text-[8px] flex-shrink-0 bg-amber-700 text-white">
+                      <span className="px-1 py-0.5 font-bold leading-none text-[8px] flex-shrink-0 bg-amber-100 border border-amber-700 text-amber-900">
                         HIGH
                       </span>
                     )}
                     {alertSeverity === 'medium' && (
-                      <span className="px-1 py-0.5 font-bold leading-none text-[8px] flex-shrink-0 bg-slate-600 text-white">
+                      <span className="px-1 py-0.5 font-bold leading-none text-[8px] flex-shrink-0 bg-slate-100 border border-slate-500 text-slate-800">
                         MED
                       </span>
                     )}
