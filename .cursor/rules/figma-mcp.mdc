@@ -1,0 +1,26 @@
+---
+description: Figma MCP server rules for design-to-code workflows
+alwaysApply: true
+---
+
+# Figma MCP integration
+
+- The Figma MCP server provides an assets endpoint for image and SVG assets.
+- If the Figma MCP server returns a localhost source for an image or SVG, use that source directly.
+- Do not import or add new icon packages when assets are in the Figma payload.
+- Do not use or create placeholders when a localhost asset source is provided.
+
+## Required flow for implementing designs
+
+1. Run `get_design_context` for the exact Figma node(s).
+2. If the response is truncated, run `get_metadata` then re-fetch specific nodes with `get_design_context`.
+3. Run `get_screenshot` for a visual reference of the variant being implemented.
+4. Download any required assets, then implement.
+5. Translate output (often React + Tailwind) into this project's conventions: reuse existing components, Tailwind tokens, and patterns in `src/`.
+6. Validate against the Figma screenshot before marking complete.
+
+## Project conventions
+
+- Prefer existing components under `src/components/` over duplicating UI.
+- Match the dashboard's teal/slate palette and layout patterns already in the codebase.
+- Place new UI in `src/components/` and wire through `src/App.tsx` or appropriate parents.
