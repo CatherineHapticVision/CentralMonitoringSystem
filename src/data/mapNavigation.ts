@@ -12,9 +12,12 @@ import {
   isPositionInHallway,
   isPositionInPublicInterior,
   isPositionInRoomInterior,
+  MEMORY_CARE_STATION,
   sharesWalkableInterior,
 } from './floorHallways';
+import { VIEWBOX } from '../components/floorPlanConstants';
 import { crossesPhysioNorthWall, stepTowardWithWalls } from '../utils/wallCollision';
+import { roomNumberForResident } from './roomInventory';
 
 /** Match alertResponseMovement — staff stops helping resident within this range */
 export const STAFF_RESPONSE_ARRIVAL_PCT = 2.8;
@@ -52,6 +55,18 @@ const OUTDOOR_EXIT_IDS = ['entrance', 'west_exit', 'east_exit', 'exit_s'] as con
 
 /** Progress per simulation tick while riding elevator / stairs (0–100 scale) */
 export const TRANSIT_PROGRESS_PER_TICK = 4;
+
+/** Map-% step per 50ms sim tick (marker movement on floor plan). */
+export const MAP_MOVE_STEP = {
+  staffWander: 0.022,
+  staffRespond: 0.032,
+  residentFloor2: 0.022,
+  residentFloor3: 0.02,
+  residentFloor4: 0.018,
+  navAlongEdge: 0.04,
+  navAlongEdgeRespond: 0.045,
+  navInterpolate: 0.04,
+} as const;
 
 function coreWaypoints(): Waypoint[] {
   const we = transitCenter(WEST_CORE.elev);
@@ -251,15 +266,22 @@ function buildFloor2Edges(): [string, string][] {
 }
 
 function buildFloor3Waypoints(): Waypoint[] {
+  const mem = MEMORY_CARE_STATION;
+  const memDoorSvgX = mem.x + 64 + 18;
+  const memDoorSvgY = mem.y + mem.h;
+  const northHallY = 262;
+
   const wps: Waypoint[] = [
     ...coreWaypoints(),
     { id: 'exit_s', x: 50, y: 92, transit: 'exit' },
-    { id: 'hall_n', x: 48, y: 34 },
+    { id: 'hall_nw', ...svgToPct(368, northHallY) },
+    { id: 'hall_ne', ...svgToPct(752, northHallY) },
     { id: 'hall_main', x: 48, y: 49 },
     { id: 'hall_s', x: 48, y: 70 },
     { id: 'hall_w', x: 26, y: 49 },
     { id: 'hall_e', x: 70, y: 49 },
-    { id: 'nurse_st', x: 49, y: 36 },
+    /** South door of memory care — in corridor, not inside secured fill */
+    { id: 'nurse_st', ...svgToPct(memDoorSvgX, memDoorSvgY + 14) },
     { id: 'safe', x: 49, y: 56 },
   ];
 
@@ -286,13 +308,16 @@ function buildFloor3Edges(): [string, string][] {
   const edges: [string, string][] = [
     ['elev1', 'stairs_w'],
     ['stairs_w', 'hall_w'],
+    ['stairs_w', 'hall_nw'],
     ['hall_w', 'hall_main'],
+    ['hall_nw', 'hall_w'],
     ['hall_main', 'hall_e'],
     ['elev2', 'stairs_e'],
     ['stairs_e', 'hall_e'],
-    ['hall_main', 'hall_n'],
+    ['stairs_e', 'hall_ne'],
+    ['hall_ne', 'hall_e'],
     ['hall_main', 'hall_s'],
-    ['hall_n', 'nurse_st'],
+    ['hall_main', 'nurse_st'],
     ['hall_main', 'safe'],
     ['hall_s', 'exit_s'],
   ];
@@ -537,6 +562,20 @@ function segmentCrossesPublicBlock(
 
 function staffStoppedAtWall(from: Position, to: Position): boolean {
   return Math.hypot(to.x - from.x, to.y - from.y) < 0.0005;
+}
+
+/** F2/F3: wall-clamped steps in halls; freeze when a brown wall blocks movement. */
+function residentPositionStep(
+  position: Position,
+  desired: Position,
+  maxStepPct: number,
+  floor: number,
+): { position: Position; blocked: boolean } {
+  if (floor !== 2 && floor !== 3) {
+    return { position: stepTowardLinear(position, desired, maxStepPct), blocked: false };
+  }
+  const next = staffMovementStep(position, desired, maxStepPct, floor);
+  return { position: next, blocked: staffStoppedAtWall(position, next) };
 }
 
 function isRoomInterior(id: string): boolean {
@@ -882,23 +921,77 @@ export function getSpawnPosition(floor: number, index: number): Position {
   return getSpawnNavigationState(floor, index).position;
 }
 
-export function getSpawnNavigationState(floor: number, index: number): NavState & { position: Position } {
-  const graph = getGraph(floor);
-  let wpId: string | undefined;
+const FLOOR2_HALL_SPAWN_WAYPOINTS = [
+  'hall_nw',
+  'hall_nc',
+  'hall_ne',
+  'hall_mid',
+  'hall_sw',
+  'hall_sc',
+  'hall_se',
+  'med',
+  'nurse_st',
+  'lounge',
+] as const;
 
+const FLOOR3_HALL_SPAWN_WAYPOINTS = [
+  'hall_nw',
+  'hall_ne',
+  'hall_main',
+  'hall_s',
+  'hall_w',
+  'hall_e',
+  'safe',
+] as const;
+
+const HALL_SPAWN_LABELS: Record<string, string> = {
+  med: 'Medication Room',
+  nurse_st: 'Nurse Station',
+  lounge: 'Lounge',
+  safe: 'Safe Wandering Area',
+};
+
+/** ~40% of F2/F3 residents start in corridors or common areas, not in a room. */
+export function residentSpawnsInHallway(floor: number, index: number): boolean {
+  if (floor !== 2 && floor !== 3) return false;
+  return (index * 11 + floor * 3) % 10 < 4;
+}
+
+export function getResidentSpawnWaypointId(floor: number, index: number): string {
   if (floor === 1) {
     const rooms = ['room101_in', 'room102_in', 'room103_in', 'room104_in'];
-    wpId = rooms[index % 4];
-  } else if (floor === 4) {
-    const outdoor = ['garden_n', 'gazebo', 'garden_s', 'path_w', 'path_e', 'bench_n'];
-    wpId = outdoor[index % outdoor.length];
-  } else {
-    const roomIds = graph.waypoints.filter((w) => w.id.endsWith('_in'));
-    wpId = roomIds[index % roomIds.length]?.id;
+    return rooms[index % 4];
   }
+  if (floor === 4) {
+    const outdoor = ['garden_n', 'gazebo', 'garden_s', 'path_w', 'path_e', 'bench_n'];
+    return outdoor[index % outdoor.length];
+  }
+  if (residentSpawnsInHallway(floor, index)) {
+    const pool = floor === 2 ? FLOOR2_HALL_SPAWN_WAYPOINTS : FLOOR3_HALL_SPAWN_WAYPOINTS;
+    return pool[index % pool.length];
+  }
+  const graph = getGraph(floor);
+  const roomIds = graph.waypoints.filter((w) => w.id.endsWith('_in'));
+  return roomIds[index % roomIds.length]?.id ?? (floor === 2 ? 'hall_mid' : 'hall_main');
+}
 
-  if (wpId) {
-    const from = waypointById(graph, wpId)!;
+export function residentSpawnLocationLabel(floor: number, indexOnFloor: number): string {
+  if (floor === 4) return 'Outdoor Grounds';
+  if (residentSpawnsInHallway(floor, indexOnFloor)) {
+    const wpId = getResidentSpawnWaypointId(floor, indexOnFloor);
+    return HALL_SPAWN_LABELS[wpId] ?? 'Hallway';
+  }
+  const room = roomNumberForResident(floor, indexOnFloor);
+  return room ? `Room ${room}` : `Floor ${floor}`;
+}
+
+export function getSpawnNavigationState(floor: number, index: number): NavState & { position: Position } {
+  const graph = getGraph(floor);
+  const wpId = getResidentSpawnWaypointId(floor, index);
+  const from = waypointById(graph, wpId);
+  if (!from) return createNavigationState(floor);
+
+  if (wpId.endsWith('_in')) {
     const doorId = wpId.replace('_in', '_door');
     const hallNeighbor = graph.edges.get(wpId)?.has(doorId)
       ? doorId
@@ -911,7 +1004,13 @@ export function getSpawnNavigationState(floor: number, index: number): NavState 
     };
   }
 
-  return createNavigationState(floor);
+  const toId = pickNeighbor(graph, wpId);
+  return {
+    navFromId: wpId,
+    navToId: toId,
+    navProgress: 0,
+    position: { x: from.x, y: from.y },
+  };
 }
 
 export function enrichWithNavigation<T extends { floor: number; position: Position }>(
@@ -977,6 +1076,28 @@ export function getTransitHoldPosition(
   const base = wp ? { x: wp.x, y: wp.y } : { x: 20.7, y: 48.9 };
   const off = transitSlotOffset(personId);
   return { x: base.x + off.x, y: base.y + off.y };
+}
+
+/** North facade of memory care — markers snap here to avoid display vs wall fight. */
+export function isNearMemoryCareNorthWall(position: Position, floor: number): boolean {
+  if (floor !== 3) return false;
+  const mem = MEMORY_CARE_STATION;
+  const svgX = (position.x / 100) * VIEWBOX.w;
+  const svgY = (position.y / 100) * VIEWBOX.h;
+  return (
+    svgX >= mem.x - 12 &&
+    svgX <= mem.x + mem.w + 12 &&
+    svgY >= mem.y - 14 &&
+    svgY <= mem.y + 12
+  );
+}
+
+function memoryCareNorthRepelPosition(position: Position): Position {
+  const mem = MEMORY_CARE_STATION;
+  const svgX = (position.x / 100) * VIEWBOX.w;
+  const centerX = mem.x + mem.w / 2;
+  const targetSvgX = svgX < centerX ? mem.x - 28 : mem.x + mem.w + 28;
+  return svgToPct(targetSvgX, mem.y - 12);
 }
 
 /** True when position is at a room/public doorway (display should not ease through jambs). */
@@ -1264,12 +1385,25 @@ function advanceStaffPosition<T extends NavigablePerson>(
   const responding = Boolean(responseTarget);
   const speedScale = options.speedScale ?? 1;
   const floor = person.floor;
-  const wanderSpeed = 0.022 * speedScale;
-  const respondSpeed = 0.032 * speedScale;
+  const wanderSpeed = MAP_MOVE_STEP.staffWander * speedScale;
+  const respondSpeed = MAP_MOVE_STEP.staffRespond * speedScale;
 
   if (!responding) {
-    person = { ...person, isMoving: true };
+    if (person.isMoving !== false) {
+      person = { ...person, isMoving: true };
+    }
   } else if (!person.isMoving && !responseTarget) {
+    return person;
+  }
+
+  if (!responding && person.isMoving === false) {
+    if (Math.random() < 0.1) {
+      return {
+        ...person,
+        isMoving: true,
+        moveTarget: randomHallwayWaypointPosition(floor),
+      };
+    }
     return person;
   }
 
@@ -1329,9 +1463,13 @@ function advanceStaffPosition<T extends NavigablePerson>(
     }
 
     if (staffStoppedAtWall(person.position, nextPos)) {
+      const moveTarget = isNearMemoryCareNorthWall(person.position, floor)
+        ? memoryCareNorthRepelPosition(person.position)
+        : goal;
       return {
         ...person,
-        moveTarget: goal,
+        position: nextPos,
+        moveTarget,
         isMoving: false,
       };
     }
@@ -1359,8 +1497,12 @@ function advanceStaffPosition<T extends NavigablePerson>(
   let nextPos = staffStepWithWalls(person.position, moveTarget, wanderSpeed, floor);
 
   if (staffStoppedAtWall(person.position, nextPos)) {
+    const moveTarget = isNearMemoryCareNorthWall(person.position, floor)
+      ? memoryCareNorthRepelPosition(person.position)
+      : randomHallwayWaypointPosition(floor);
     return {
       ...person,
+      position: nextPos,
       moveTarget,
       isMoving: false,
     };
@@ -1370,9 +1512,13 @@ function advanceStaffPosition<T extends NavigablePerson>(
     moveTarget = randomHallwayWaypointPosition(floor);
     nextPos = staffStepWithWalls(person.position, moveTarget, wanderSpeed, floor);
     if (staffStoppedAtWall(person.position, nextPos)) {
+      const away = isNearMemoryCareNorthWall(person.position, floor)
+        ? memoryCareNorthRepelPosition(person.position)
+        : randomHallwayWaypointPosition(floor);
       return {
         ...person,
-        moveTarget,
+        position: nextPos,
+        moveTarget: away,
         isMoving: false,
       };
     }
@@ -1461,7 +1607,7 @@ export function advancePersonPosition<T extends NavigablePerson>(
           };
         }
       }
-      navProgress += 0.04 / Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
+      navProgress += MAP_MOVE_STEP.navAlongEdge / Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
       if (navProgress >= 1) {
         navFromId = navToId;
         navToId = pickResponseNeighbor(graph, navFromId, person.navFromId, targetWaypointId);
@@ -1487,7 +1633,7 @@ export function advancePersonPosition<T extends NavigablePerson>(
       const desired = positionOnEdge(graph, navFromId, navToId, navProgress);
       return {
         ...person,
-        position: stepTowardLinear(person.position, desired, 0.04 * speedScale),
+        position: stepTowardLinear(person.position, desired, MAP_MOVE_STEP.navInterpolate * speedScale),
         navFromId,
         navToId,
         navProgress,
@@ -1500,7 +1646,7 @@ export function advancePersonPosition<T extends NavigablePerson>(
       1.2;
     if (!arrived) {
       const edgeLen = Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
-      const speedPerTick = 0.045 * speedScale;
+      const speedPerTick = MAP_MOVE_STEP.navAlongEdgeRespond * speedScale;
       navProgress += speedPerTick / edgeLen;
 
       if (navProgress >= 1) {
@@ -1515,7 +1661,7 @@ export function advancePersonPosition<T extends NavigablePerson>(
       const desired = positionOnEdge(graph, navFromId, navToId, navProgress);
       return {
         ...person,
-        position: stepTowardLinear(person.position, desired, 0.04 * speedScale),
+        position: stepTowardLinear(person.position, desired, MAP_MOVE_STEP.navInterpolate * speedScale),
         navFromId,
         navToId,
         navProgress,
@@ -1532,12 +1678,24 @@ export function advancePersonPosition<T extends NavigablePerson>(
 
   const edgeLen = Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
 
-  const speedPerTick =
-    (person.floor === 3 ? 0.02 : person.floor === 4 ? 0.018 : 0.022) * speedScale;
+  const hallStep =
+    person.floor === 3
+      ? MAP_MOVE_STEP.residentFloor3
+      : person.floor === 4
+        ? MAP_MOVE_STEP.residentFloor4
+        : MAP_MOVE_STEP.residentFloor2;
+  const speedPerTick = hallStep * speedScale;
 
   const moveChance = person.floor === 3 ? 0.22 : 0.18;
 
   const hold = positionOnEdge(graph, navFromId, navToId, navProgress);
+
+  const pauseStep = residentPositionStep(
+    person.position,
+    hold,
+    speedPerTick * 0.35,
+    floor,
+  );
 
   if (Math.random() > moveChance) {
     return {
@@ -1545,28 +1703,30 @@ export function advancePersonPosition<T extends NavigablePerson>(
       navFromId,
       navToId,
       navProgress,
-      position: stepTowardLinear(person.position, hold, speedPerTick * 0.35),
+      position: pauseStep.position,
     };
   }
 
-  navProgress += speedPerTick / edgeLen;
+  let nextProgress = navProgress + speedPerTick / edgeLen;
+  let nextFromId = navFromId;
+  let nextToId = navToId;
 
-  if (navProgress >= 1) {
-    navFromId = navToId;
+  if (nextProgress >= 1) {
+    nextFromId = navToId;
     const prev = person.navToId;
-    navToId = pickNeighbor(graph, navFromId, prev, navToId, navProgress);
-    navProgress = 0;
+    nextToId = pickNeighbor(graph, navFromId, prev, navToId, navProgress);
+    nextProgress = 0;
 
-    const atWp = waypointById(graph, navFromId)!;
+    const atWp = waypointById(graph, nextFromId)!;
     if (atWp.transit && Math.random() < transitUseChance(person, atWp.transit)) {
       const transit = tryStartFloorTransit(person, atWp.transit);
       if (transit) {
-        const hold = getTransitHoldPosition(person.floor, person.id, transit.method);
+        const holdPos = getTransitHoldPosition(person.floor, person.id, transit.method);
         return {
           ...person,
-          position: hold,
-          navFromId,
-          navToId,
+          position: holdPos,
+          navFromId: nextFromId,
+          navToId: nextToId,
           navProgress: 0,
           inTransit: { ...transit, progress: 0 },
         };
@@ -1574,13 +1734,31 @@ export function advancePersonPosition<T extends NavigablePerson>(
     }
   }
 
-  const desired = positionOnEdge(graph, navFromId, navToId, navProgress);
+  const desired = positionOnEdge(graph, nextFromId, nextToId, nextProgress);
+  const step = residentPositionStep(person.position, desired, speedPerTick, floor);
+
+  if (step.blocked) {
+    const prev = person.navToId;
+    let nextToId = pickNeighbor(graph, navFromId, prev, navToId, navProgress);
+    if (isNearMemoryCareNorthWall(person.position, floor)) {
+      const svgX = (person.position.x / 100) * VIEWBOX.w;
+      const centerX = MEMORY_CARE_STATION.x + MEMORY_CARE_STATION.w / 2;
+      nextToId = svgX < centerX ? 'hall_nw' : 'hall_ne';
+    }
+    return {
+      ...person,
+      position: step.position,
+      navFromId,
+      navToId: nextToId,
+      navProgress: 0,
+    };
+  }
 
   return {
     ...person,
-    position: stepTowardLinear(person.position, desired, speedPerTick),
-    navFromId,
-    navToId,
-    navProgress,
+    position: step.position,
+    navFromId: nextFromId,
+    navToId: nextToId,
+    navProgress: nextProgress,
   };
 }

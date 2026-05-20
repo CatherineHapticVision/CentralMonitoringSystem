@@ -4,7 +4,7 @@ export interface MapPosition {
 }
 
 /**
- * Max map-% per animation frame — ~match sim (~0.02 per 50ms ≈ 0.012 per frame at 60fps).
+ * Max map-% per animation frame (~match sim step per 50ms tick).
  * Walls are enforced in simulation only; display eases smoothly toward sim position.
  */
 export const MAX_DISPLAY_STEP = { resident: 0.011, staff: 0.011 } as const;

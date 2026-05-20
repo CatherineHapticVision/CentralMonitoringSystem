@@ -41,10 +41,17 @@ function floor2HallRects(): HallRect[] {
   ];
 }
 
+/** Matches FloorMapLayouts memory care station — north edge at y=272 */
+export const MEMORY_CARE_STATION = { x: 508, y: 272, w: 164, h: 78 } as const;
+
 function floor3HallRects(): HallRect[] {
   const { hallMidTop, hallMidBottom, hallSouthLoop, startX } = FLOOR3_WING;
+  const mem = MEMORY_CARE_STATION;
   return [
-    { x: 268, y: 252, w: 428, h: 28 },
+    /** North corridor west of memory care (no overlap with station fill) */
+    { x: 268, y: 252, w: mem.x - 268, h: 20 },
+    /** North corridor east of memory care */
+    { x: mem.x + mem.w, y: 252, w: 696 - (mem.x + mem.w), h: 20 },
     { x: 268, y: hallMidTop, w: 428, h: hallMidBottom - hallMidTop },
     { x: 268, y: 280, w: 36, h: 98 },
     { x: 660, y: 280, w: 36, h: 98 },

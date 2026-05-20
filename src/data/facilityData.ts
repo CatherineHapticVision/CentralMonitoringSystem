@@ -1,8 +1,7 @@
 // Grandview Care Long-Term Care Facility - 124 Residents
 // Ontario, Canada
 
-import { createNavigationState, getSpawnNavigationState } from './mapNavigation';
-import { roomNumberForResident } from './roomInventory';
+import { createNavigationState, getSpawnNavigationState, residentSpawnLocationLabel } from './mapNavigation';
 
 interface Person {
   id: string;
@@ -105,10 +104,7 @@ export function staffNameForId(id: string): string {
 }
 
 function generateFloorLocation(floor: number, indexOnFloor: number): string {
-  if (floor === 4) return 'Outdoor Grounds';
-  const room = roomNumberForResident(floor, indexOnFloor);
-  if (room) return `Room ${room}`;
-  return `Floor ${floor}`;
+  return residentSpawnLocationLabel(floor, indexOnFloor);
 }
 
 function generateMapPosition(floor: number, index: number): { x: number; y: number } {

@@ -23,7 +23,9 @@ interface MapPersonForMetrics {
 
 /** Map % → approximate metres walked (facility ~80 m across) */
 const METRES_PER_MAP_UNIT = 0.85;
-const STEPS_PER_METRE = 1.15;
+/** Ambulating older adults — shorter stride (~0.52–0.58 m) for realistic step cadence. */
+const ELDERLY_STRIDE_METRES = 0.54;
+const STEPS_PER_METRE = (1 / ELDERLY_STRIDE_METRES) * 7.5;
 const MIN_DELTA_MAP_UNITS = 1e-9;
 
 function idHash(id: string): number {
@@ -113,10 +115,12 @@ function applyMovementDelta(
   const stepAdd = Math.floor(stepAcc);
   stepRemainder[residentId] = stepAcc - stepAdd;
 
-  const steps = metrics.steps + (stepAdd > 0 ? stepAdd : 1);
   const distance = Math.round((metrics.distance + metres / 1000) * 1000) / 1000;
+  if (stepAdd <= 0) {
+    return { ...metrics, distance };
+  }
 
-  return { ...metrics, steps, distance };
+  return { ...metrics, steps: metrics.steps + stepAdd, distance };
 }
 
 export function applyResidentDisplayMovement(

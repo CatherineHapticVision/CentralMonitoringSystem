@@ -4,7 +4,7 @@ import { useProfilePhotos } from '../context/ProfilePhotoContext';
 import { useLoadedMarkerPhotos } from '../hooks/useLoadedMarkerPhotos';
 import type { FacilityAlert } from '../types/alerts';
 import { residentMarkerStatus } from '../types/alerts';
-import { isNearMapDoor } from '../data/mapNavigation';
+import { isNearMapDoor, isNearMemoryCareNorthWall } from '../data/mapNavigation';
 import { MAX_DISPLAY_STEP, smoothToward, type MapPosition } from '../utils/mapDisplayMotion';
 
 type Position = MapPosition;
@@ -166,7 +166,9 @@ export function FloorMap({
         }
 
         const snapDisplay =
-          Boolean(person.inTransit) || isNearMapDoor(target, floor);
+          Boolean(person.inTransit) ||
+          isNearMapDoor(target, floor) ||
+          isNearMemoryCareNorthWall(target, floor);
 
         if (snapDisplay) {
           next[person.id] = target;

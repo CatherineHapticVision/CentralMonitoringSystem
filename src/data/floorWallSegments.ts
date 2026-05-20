@@ -229,6 +229,13 @@ function buildFloor3Walls(): WallSegment[] {
   walls.push(...wallsBetweenRoomColumns(northCount, startX, step, roomW, northY, northH));
   walls.push(...wallsBetweenRoomColumns(southCount, startX, step, roomW, southY, southH));
 
+  const clinicalYTop = 292;
+  const clinicalYBottom = 402;
+  walls.push(...wallsForGapStrip(456, 468, clinicalYTop, clinicalYBottom));
+  walls.push(...wallsForGapStrip(616, 628, clinicalYTop, clinicalYBottom));
+  walls.push(...wallsForGapStrip(724, 836, clinicalYTop, clinicalYBottom));
+  walls.push(...wallsForGapStrip(888, 898, clinicalYTop, clinicalYBottom));
+
   return walls;
 }
 
