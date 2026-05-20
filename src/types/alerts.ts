@@ -1,4 +1,5 @@
 import { findMapPersonLocation } from '../data/mapLocation';
+import { emergencyCallAlertMessage } from '../utils/emergencyCall';
 import { formatRelativeTimeAgo } from '../utils/time';
 
 export type WanderingViolation = 'staff' | 'clean' | 'soiled' | 'outdoor_perimeter';
@@ -62,8 +63,8 @@ export function alertsForResident(residentId: string, alerts: FacilityAlert[]): 
 
 /**
  * Marker colour tier for one alert (aligned with legend + alert panel).
- * Red: critical severity, emergency/call, outdoor perimeter wandering.
- * Amber: high/medium severity vitals, staff/clean/soiled wandering.
+ * Red: emergency / call only (critical).
+ * Amber: high heartrate, all wandering (medium).
  */
 export function alertMarkerLevel(alert: FacilityAlert): 'red' | 'amber' | null {
   switch (alert.type) {
@@ -71,20 +72,22 @@ export function alertMarkerLevel(alert: FacilityAlert): 'red' | 'amber' | null {
     case 'emergency':
       return 'red';
     case 'heartrate':
-      return alert.severity === 'critical' ? 'red' : 'amber';
     case 'wandering':
-      if (alert.wanderingViolation === 'outdoor_perimeter') return 'red';
       return 'amber';
     default:
       return null;
   }
 }
 
-/** Severity to store on a new wandering alert from violation type */
-export function wanderingAlertSeverity(
-  violation: WanderingViolation,
-): FacilityAlert['severity'] {
-  return violation === 'outdoor_perimeter' ? 'critical' : 'medium';
+/** All wandering violations (perimeter + secured zones) are medium severity. */
+export function wanderingAlertSeverity(_violation: WanderingViolation): FacilityAlert['severity'] {
+  return 'medium';
+}
+
+/** High: resting HR sustained below 50 or above 120 BPM. */
+export function heartrateAlertSeverity(heartRate: number): 'high' | null {
+  if (heartRate < 50 || heartRate > 120) return 'high';
+  return null;
 }
 
 export interface AlertSeverityCounts {
@@ -180,10 +183,13 @@ export function syncEmergencyCallAlerts(
       type: 'call',
       personId: call.residentId,
       personName: call.residentName,
-      message:
-        call.status === 'connected'
-          ? 'Emergency call active.'
-          : 'Emergency call from resident. Staff notified.',
+      message: emergencyCallAlertMessage(
+        call.status === 'escalated'
+          ? 'escalated'
+          : call.status === 'connected'
+            ? 'connected'
+            : 'ringing',
+      ),
       time: 'Just now',
       severity: 'critical',
       floor: onMap?.floor ?? 1,

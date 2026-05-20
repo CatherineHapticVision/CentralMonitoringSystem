@@ -310,8 +310,9 @@ export function Floor1Layout() {
           fill={HALL_FILL}
           stroke="none"
         />
-        <rect x={728} y={262} width={48} height={100} fill={HALL_FILL} stroke="none" />
-        <rect x={268} y={424} width={48} height={136} fill={HALL_FILL} stroke="none" />
+        <rect x={268} y={250} width={204} height={118} fill={HALL_FILL} stroke="none" />
+        <rect x={268} y={250} width={52} height={334} fill={HALL_FILL} stroke="none" />
+        <rect x={700} y={262} width={82} height={110} fill={HALL_FILL} stroke="none" />
         <rect x={708} y={424} width={56} height={146} fill={HALL_FILL} stroke="none" />
       </g>
 

@@ -1,6 +1,5 @@
-import { Search, Bell, Clock, Building2, Trees, Shield, LogOut } from 'lucide-react';
+import { Search, Bell, Clock, Building2, Trees, Shield } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
 import { SystemStatus } from './SystemStatus';
 
 interface TopBarProps {
@@ -34,7 +33,6 @@ export function TopBar({
   searchQuery,
   onSearchChange,
 }: TopBarProps) {
-  const { session, signOut } = useAuth();
   const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
@@ -129,23 +127,6 @@ export function TopBar({
         </div>
 
         <SystemStatus lastUpdate={lastUpdate} connectionStatus={connectionStatus} />
-
-        {session && (
-          <div className="flex items-center gap-2 pl-2 border-l border-slate-400">
-            <span className="text-[10px] font-semibold text-slate-700 uppercase tracking-wide max-w-[7rem] truncate">
-              {session.username}
-            </span>
-            <button
-              type="button"
-              onClick={signOut}
-              className="flex items-center gap-1 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-700 bg-white border border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
-              aria-label="Sign out"
-            >
-              <LogOut className="w-3 h-3" aria-hidden />
-              Sign out
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );

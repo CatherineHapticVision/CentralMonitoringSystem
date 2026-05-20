@@ -1,4 +1,5 @@
 import { VIEWBOX } from '../components/floorPlanConstants';
+import { primaryRespondingStaffIdForResident } from './generateProfiles';
 import { findMapPersonLocation } from './mapLocation';
 import type { FacilityAlert, WanderingViolation } from '../types/alerts';
 import { wanderingAlertSeverity } from '../types/alerts';
@@ -183,11 +184,28 @@ type MapResident = {
   navToId?: string;
 };
 
+type WanderingPerson = {
+  id: string;
+  name: string;
+  location: string;
+  status: 'normal' | 'alert' | 'warning';
+};
+
+function wanderingRespondingStaff(
+  resident: WanderingPerson | undefined,
+  staff: WanderingPerson[],
+  floor: number,
+): string[] {
+  if (!resident) return ['RN01'];
+  return [primaryRespondingStaffIdForResident(resident, staff, floor)];
+}
+
 /** Add/remove wandering alerts in the feed based on live map positions */
 export function reconcileWanderingAlerts(
   alerts: FacilityAlert[],
   mapPeople: MapResident[],
-  residents: Array<{ id: string; name: string; location: string }>,
+  residents: WanderingPerson[],
+  staff: WanderingPerson[],
 ): FacilityAlert[] {
   let next = filterWanderingAlerts(alerts, mapPeople, residents);
 
@@ -208,6 +226,7 @@ export function reconcileWanderingAlerts(
       const severity = wanderingAlertSeverity(violation);
 
       const location = findMapPersonLocation(person.id, mapPeople) ?? undefined;
+      const respondingStaff = wanderingRespondingStaff(resident, staff, person.floor);
 
       if (existingIdx >= 0) {
         const existing = next[existingIdx];
@@ -219,6 +238,7 @@ export function reconcileWanderingAlerts(
           floor: person.floor,
           personName,
           location,
+          respondingStaff,
         };
       } else {
         next.push({
@@ -232,6 +252,7 @@ export function reconcileWanderingAlerts(
           wanderingViolation: violation,
           floor: person.floor,
           location,
+          respondingStaff,
         });
       }
     } else if (existingIdx >= 0) {

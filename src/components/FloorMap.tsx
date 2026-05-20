@@ -16,6 +16,9 @@ interface MapPerson {
   type: 'resident' | 'staff';
   isMoving: boolean;
   floor: number;
+  navFromId?: string;
+  navToId?: string;
+  navProgress?: number;
   inTransit?: {
     fromFloor: number;
     toFloor: number;
@@ -126,6 +129,8 @@ export function FloorMap({
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [smoothPositions, setSmoothPositions] = useState<Record<string, Position>>({});
   const smoothRef = useRef<Record<string, Position>>({});
+  const peopleRef = useRef(people);
+  peopleRef.current = people;
   const viewFloorRef = useRef<number | null>(null);
 
   function snapDisplayedPositions(list: MapPerson[]) {
@@ -145,24 +150,29 @@ export function FloorMap({
     }
   }, [floor, people]);
 
-  // Smooth movement only while staying on the same floor view
+  // One continuous rAF loop — do not restart when `people` updates every sim tick
   useEffect(() => {
     let frameId = 0;
     const animate = () => {
-      const peopleOnFloor = people;
+      const peopleOnFloor = peopleRef.current;
       const next: Record<string, Position> = { ...smoothRef.current };
       for (const person of peopleOnFloor) {
         const target = person.position;
-        const maxStep =
-          person.type === 'staff' ? MAX_DISPLAY_STEP.staff : MAX_DISPLAY_STEP.resident;
-
         const current = next[person.id];
         if (current === undefined) {
           next[person.id] = target;
           continue;
         }
 
-        next[person.id] = smoothToward(current, target, maxStep);
+        const maxStep =
+          person.type === 'staff' ? MAX_DISPLAY_STEP.staff : MAX_DISPLAY_STEP.resident;
+        const dx = target.x - current.x;
+        const dy = target.y - current.y;
+        const d = Math.hypot(dx, dy);
+        next[person.id] =
+          person.type === 'staff' && d < 0.028
+            ? target
+            : smoothToward(current, target, maxStep);
       }
       smoothRef.current = next;
       setSmoothPositions({ ...next });
@@ -170,7 +180,7 @@ export function FloorMap({
     };
     frameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(frameId);
-  }, [people]);
+  }, [floor]);
 
   // Force re-render every second to update call timers
   useEffect(() => {

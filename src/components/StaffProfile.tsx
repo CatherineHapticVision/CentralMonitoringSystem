@@ -1,6 +1,7 @@
 import { X, MapPin, Clock, Briefcase, Phone, Mail, AlertTriangle, Bell, Activity, Timer, Users, CheckCircle2 } from 'lucide-react';
 import { ProfilePhotoSlot } from './ProfilePhotoSlot';
 import { useProfilePhotos } from '../context/ProfilePhotoContext';
+import { RespondingStaffLinks } from './RespondingStaffLinks';
 
 interface ActiveAlert {
   id: string;
@@ -35,9 +36,10 @@ interface StaffProfileProps {
   staff: StaffData | null;
   onClose: () => void;
   onResidentClick: (residentId: string) => void;
+  onStaffClick: (staffId: string) => void;
 }
 
-export function StaffProfile({ staff, onClose, onResidentClick }: StaffProfileProps) {
+export function StaffProfile({ staff, onClose, onResidentClick, onStaffClick }: StaffProfileProps) {
   const { getPhotoUrl, setPhotoUrl } = useProfilePhotos();
   const photoUrl = staff ? getPhotoUrl(staff.id, 'staff') : undefined;
 
@@ -162,8 +164,12 @@ export function StaffProfile({ staff, onClose, onResidentClick }: StaffProfilePr
                       ) : (
                         <Users className="w-3 h-3 text-blue-700 shrink-0" />
                       )}
-                      <span className="font-mono font-bold text-slate-900">
-                        Responding: {alert.respondingStaff.join(', ')}
+                      <span className="text-slate-900">
+                        <span className="text-slate-600 font-bold uppercase">Assigned: </span>
+                        <RespondingStaffLinks
+                          staffIds={alert.respondingStaff}
+                          onStaffClick={onStaffClick}
+                        />
                         {alert.acknowledgedAt &&
                         (alert.type === 'call' || alert.type === 'emergency')
                           ? ` — responded ${alert.acknowledgedAt}`

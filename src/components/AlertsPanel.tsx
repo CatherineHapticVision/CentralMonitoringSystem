@@ -1,11 +1,17 @@
-import { AlertTriangle, Heart, MapPin, Phone, Activity, Clock, CheckCircle2, Users, Building2, Navigation, Clock3 } from 'lucide-react';
+import { AlertTriangle, Heart, MapPin, Phone, Activity, Clock, Users, Building2, Navigation } from 'lucide-react';
 import { useEffect, useState, type ReactElement } from 'react';
 
 import type { FacilityAlert } from '../types/alerts';
 import { countAlertsBySeverity } from '../types/alerts';
 import { findMapPersonLocation } from '../data/mapLocation';
-import { wanderingViolationMessage } from '../data/wanderingZones';
-import { isAssignedStaffAcknowledgedAlert } from '../utils/emergencyCall';
+import {
+  EMERGENCY_ESCALATION_SECONDS,
+  isAssignedStaffAcknowledgedAlert,
+  shouldShowEscalatedCallUi,
+} from '../utils/emergencyCall';
+import { supervisorIdForFloor } from '../utils/alertResponseMovement';
+import { EscalatedSupervisorNotice } from './EscalatedSupervisorNotice';
+import { RespondingStaffLinks } from './RespondingStaffLinks';
 
 interface AlertsPanelProps {
   alerts: FacilityAlert[];
@@ -21,6 +27,7 @@ interface AlertsPanelProps {
     navToId?: string;
   }>;
   residents: Array<{ id: string; location: string }>;
+  staff: Array<{ id: string; location: string }>;
 }
 
 export function AlertsPanel({
@@ -31,6 +38,7 @@ export function AlertsPanel({
   onStaffClick,
   mapPeople,
   residents,
+  staff,
 }: AlertsPanelProps) {
   const [filterFloor, setFilterFloor] = useState<number | null>(null);
 
@@ -122,6 +130,7 @@ export function AlertsPanel({
                 getFloorLabel={getFloorLabel}
                 mapPeople={mapPeople}
                 residents={residents}
+                staff={staff}
               />
             ))
           )}
@@ -282,6 +291,7 @@ function AlertCard({
   getFloorLabel,
   mapPeople,
   residents: _residents,
+  staff,
 }: {
   alert: FacilityAlert;
   currentFloor: number;
@@ -299,6 +309,7 @@ function AlertCard({
     navToId?: string;
   }>;
   residents: Array<{ id: string; location: string }>;
+  staff: Array<{ id: string; location: string }>;
 }) {
   const onMap = mapPeople.find((p) => p.id === alert.personId && p.position);
   const liveLocation =
@@ -316,14 +327,15 @@ function AlertCard({
   const [callDuration, setCallDuration] = useState(0);
 
   useEffect(() => {
-    if (alert.callStartTime) {
-      const interval = setInterval(() => {
-        const elapsed = Math.floor((Date.now() - alert.callStartTime!.getTime()) / 1000);
-        setCallDuration(elapsed);
-      }, 1000);
+    if (!alert.callStartTime) return;
 
-      return () => clearInterval(interval);
-    }
+    const tick = () => {
+      setCallDuration(Math.floor((Date.now() - alert.callStartTime!.getTime()) / 1000));
+    };
+    tick();
+    const interval = setInterval(tick, 250);
+
+    return () => clearInterval(interval);
   }, [alert.callStartTime]);
 
   const minutes = Math.floor(callDuration / 60);
@@ -337,9 +349,10 @@ function AlertCard({
     return 'text-slate-600';
   };
 
-  const isWandering = alert.type === 'wandering';
   const isEmergencyAlert = alert.type === 'call' || alert.type === 'emergency';
   const staffResponded = isEmergencyAlert && isAssignedStaffAcknowledgedAlert(alert);
+  const showEscalated = shouldShowEscalatedCallUi(alert, staffResponded, callDuration);
+  const escalatedSupervisorId = showEscalated ? supervisorIdForFloor(staff, alert.floor) : null;
   const alertTags = buildAlertTags(alert, liveFloor, getFloorLabel);
 
   return (
@@ -382,8 +395,20 @@ function AlertCard({
           {getAlertIcon(alert.type)}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-slate-800 mb-1.5 leading-snug font-medium text-xs">
-            {alert.message}
+          <p
+            className={`mb-1.5 leading-snug font-medium text-xs ${
+              showEscalated ? 'text-red-900 font-bold' : 'text-slate-800'
+            }`}
+          >
+            {showEscalated && escalatedSupervisorId ? (
+              <EscalatedSupervisorNotice
+                supervisorId={escalatedSupervisorId}
+                onStaffClick={onStaffClick}
+                variant="message"
+              />
+            ) : (
+              alert.message
+            )}
           </p>
 
           {liveLocation && (
@@ -401,83 +426,41 @@ function AlertCard({
             </div>
           )}
 
-          {isEmergencyAlert && alert.relatedStaffId && (
-            <button
-              type="button"
-              onClick={() => onStaffClick(alert.relatedStaffId!)}
-              className="mb-1.5 w-full text-left bg-slate-50 border-l-2 border-blue-700 p-1.5 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-700"
-              aria-label={`Open profile for ${alert.relatedStaffName ?? alert.relatedStaffId}`}
-            >
-              <div className="flex items-center gap-1 text-[10px]">
-                <Users className="text-blue-700 w-3 h-3 shrink-0" />
-                <span className="font-bold text-slate-700">STAFF:</span>
-                <span className="font-bold text-slate-900">{alert.relatedStaffName ?? alert.relatedStaffId}</span>
-                {alert.relatedStaffName && (
-                  <span className="font-mono text-slate-600">{alert.relatedStaffId}</span>
-                )}
-              </div>
-            </button>
-          )}
-
-          {isWandering && alert.wanderingViolation && (
-            <p className="text-[10px] text-slate-600 mb-1.5">
-              {wanderingViolationMessage(alert.wanderingViolation)}
-            </p>
-          )}
-
           {(isEmergencyAlert && alert.relatedStaffId) || (alert.respondingStaff && alert.respondingStaff.length > 0) ? (
-            <div
-              className={`mb-1.5 border-l-2 p-1.5 ${
-                isEmergencyAlert
-                  ? staffResponded
-                    ? 'bg-green-50 border-green-700'
-                    : 'bg-amber-50 border-amber-700'
-                  : 'bg-blue-50 border-blue-700'
-              }`}
-            >
+            <div className="mb-1.5 border-l-2 border-blue-700 bg-blue-50 p-1.5">
               <div className="flex items-start gap-1 text-[10px]">
-                {isEmergencyAlert && staffResponded ? (
-                  <CheckCircle2 className="text-green-700 w-3 h-3 shrink-0 mt-0.5" />
-                ) : isEmergencyAlert ? (
-                  <Clock3 className="text-amber-800 w-3 h-3 shrink-0 mt-0.5" />
-                ) : (
-                  <Users className="text-blue-700 w-3 h-3 shrink-0 mt-0.5" />
-                )}
+                <Users className="text-blue-700 w-3 h-3 shrink-0 mt-0.5" aria-hidden />
                 <div className="min-w-0">
-                  <span
-                    className={`font-bold uppercase block ${
-                      isEmergencyAlert
-                        ? staffResponded
-                          ? 'text-green-900'
-                          : 'text-amber-900'
-                        : 'text-slate-700'
-                    }`}
-                  >
-                    Responding
-                  </span>
+                  <span className="font-bold uppercase block text-slate-700">Assigned</span>
                   {isEmergencyAlert && alert.relatedStaffId ? (
                     <>
-                      <span className="text-slate-800 block">
-                        <span className="font-mono font-bold">{alert.relatedStaffId}</span>
-                        {alert.relatedStaffName ? ` — ${alert.relatedStaffName}` : ''}
-                        {staffResponded
-                          ? ` responded${alert.acknowledgedAt ? ` (${alert.acknowledgedAt})` : ''}`
-                          : ' — not yet responded'}
-                      </span>
-                      {staffResponded ? (
-                        <span className="text-slate-600 block mt-0.5">Escalation paused</span>
-                      ) : (
-                        alert.callStatus === 'ringing' && (
-                          <span className="text-slate-600 block mt-0.5">
-                            Escalates after 2 minutes without response
-                          </span>
-                        )
+                      <RespondingStaffLinks
+                        staffIds={[alert.relatedStaffId]}
+                        nameById={
+                          alert.relatedStaffName
+                            ? { [alert.relatedStaffId]: alert.relatedStaffName }
+                            : undefined
+                        }
+                        onStaffClick={onStaffClick}
+                        className="text-slate-900"
+                      />
+                      {!showEscalated && (
+                        <span className="text-slate-600 block mt-0.5">
+                          {staffResponded
+                            ? `Responded${alert.acknowledgedAt ? ` (${alert.acknowledgedAt})` : ''}. Escalation paused.`
+                            : 'Not yet responded.'}
+                          {!staffResponded && alert.callStatus === 'ringing' && (
+                            <> Escalates after {EMERGENCY_ESCALATION_SECONDS} seconds without response.</>
+                          )}
+                        </span>
                       )}
                     </>
                   ) : (
-                    <span className="font-mono font-bold text-slate-900">
-                      {alert.respondingStaff!.join(', ')}
-                    </span>
+                    <RespondingStaffLinks
+                      staffIds={alert.respondingStaff!}
+                      onStaffClick={onStaffClick}
+                      className="text-slate-900"
+                    />
                   )}
                 </div>
               </div>
@@ -495,7 +478,7 @@ function AlertCard({
               </div>
             )}
           </div>
-          {alert.callStatus === 'escalated' && !staffResponded && (
+          {showEscalated && (
             <div className="mt-2 px-3 py-2 bg-red-800 text-white text-xs font-bold uppercase tracking-wide text-center border-t border-red-900">
               ESCALATED - SUPERVISOR NOTIFIED
             </div>

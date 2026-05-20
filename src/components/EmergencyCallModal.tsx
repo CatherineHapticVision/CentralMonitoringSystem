@@ -2,6 +2,8 @@ import { Phone, Clock, AlertTriangle, MapPin, X, CheckCircle2, Clock3 } from 'lu
 import { useEffect, useState } from 'react';
 
 import {
+  EMERGENCY_ESCALATION_SECONDS,
+  EMERGENCY_ESCALATION_WARNING_SECONDS,
   emergencyCallElapsedSeconds,
   formatRelativeTimeAgo,
   isAssignedStaffAcknowledged,
@@ -40,7 +42,9 @@ export function EmergencyCallModal({
   onStaffClick,
 }: EmergencyCallModalProps) {
   const activeCalls = calls.filter(
-    (c) => !c.dismissed && (c.status === 'ringing' || c.status === 'connected'),
+    (c) =>
+      !c.dismissed &&
+      (c.status === 'ringing' || c.status === 'connected' || c.status === 'escalated'),
   );
 
   if (activeCalls.length === 0) return null;
@@ -96,8 +100,11 @@ function EmergencyCallCard({
         setRespondedLabel(formatRelativeTimeAgo(call.acknowledgedAt));
       }
 
-      // Auto-escalate after 2 minutes only if assigned staff has not responded
-      if (elapsed >= 120 && call.status === 'ringing' && !staffResponded) {
+      if (
+        elapsed >= EMERGENCY_ESCALATION_SECONDS &&
+        call.status === 'ringing' &&
+        !staffResponded
+      ) {
         onEscalate(call.id);
       }
     }, 1000);
@@ -107,7 +114,12 @@ function EmergencyCallCard({
 
   const minutes = Math.floor(duration / 60);
   const seconds = duration % 60;
-  const showEscalationWarning = !staffResponded && call.status === 'ringing' && duration >= 90;
+  const showEscalated =
+    call.status === 'escalated' ||
+    (call.status === 'ringing' && !staffResponded && duration >= EMERGENCY_ESCALATION_SECONDS);
+  const showEscalationWarning =
+    !staffResponded &&
+    (showEscalated || (call.status === 'ringing' && duration >= EMERGENCY_ESCALATION_WARNING_SECONDS));
 
   const getInitials = (name: string) => {
     return name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -205,11 +217,15 @@ function EmergencyCallCard({
         {showEscalationWarning && (
           <div className="mt-2.5 px-3 py-2 bg-red-900 border-t border-red-950 flex items-center justify-center gap-2">
             <AlertTriangle className="w-5 h-5 text-white" />
-            <span className="text-sm font-bold text-white uppercase tracking-wide">
-              {duration >= 120
-                ? 'ESCALATED - SUPERVISOR NOTIFIED'
-                : `AUTO-ESCALATE IN ${120 - duration}S`}
-            </span>
+            {showEscalated ? (
+              <span className="text-sm font-bold text-white uppercase tracking-wide">
+                ESCALATED - SUPERVISOR NOTIFIED
+              </span>
+            ) : (
+              <span className="text-sm font-bold text-white uppercase tracking-wide">
+                {`AUTO-ESCALATE IN ${EMERGENCY_ESCALATION_SECONDS - duration}S`}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -272,7 +288,9 @@ function EmergencyCallCard({
                 {call.staffName} has not responded to this call yet
               </p>
               {call.status === 'ringing' && (
-                <p className="text-[10px] text-slate-600 mt-0.5">Will escalate to supervisor after 2 minutes</p>
+                <p className="text-[10px] text-slate-600 mt-0.5">
+                  Will escalate to supervisor after {EMERGENCY_ESCALATION_SECONDS} seconds
+                </p>
               )}
             </div>
           </div>

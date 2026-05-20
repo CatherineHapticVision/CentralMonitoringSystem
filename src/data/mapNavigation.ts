@@ -1,4 +1,4 @@
-/** Walkable navigation — movement only along corridor graph edges (no wall clipping) */
+/** Walkable navigation — corridor graph for pathing; positions clamped against brown wall lines */
 
 import {
   EAST_CORE,
@@ -8,6 +8,20 @@ import {
   transitCenter,
   WEST_CORE,
 } from '../components/floorPlanConstants';
+import {
+  isPositionInHallway,
+  isPositionInPublicInterior,
+  isPositionInRoomInterior,
+  sharesWalkableInterior,
+} from './floorHallways';
+import { crossesPhysioNorthWall, stepTowardWithWalls } from '../utils/wallCollision';
+
+/** Match alertResponseMovement — staff stops helping resident within this range */
+export const STAFF_RESPONSE_ARRIVAL_PCT = 2.8;
+
+/** Near a doorway — use linear steps and hold move target to avoid threshold fighting. */
+const DOOR_ZONE_PCT = 5.5;
+const DOOR_COMMIT_PCT = 6.5;
 
 export interface Position {
   x: number;
@@ -52,24 +66,59 @@ function coreWaypoints(): Waypoint[] {
   ];
 }
 
+/** Floor 1 corridor spine — centers of hallway rects in Floor1Layout (SVG 1200×800). */
+const F1_EW_Y = 388;
+const F1_SOUTH_Y = 530;
+const F1_NORTH_Y = 250;
+const F1_WEST_X = 292;
+const F1_MID_X = 474;
+const F1_EAST_X = 806;
+/** West of nurse/physio block — avoids east shaft through clinical rooms */
+const F1_NURSE_WEST_X = 668;
+/** East shaft (narrow rect x=728–776) — PT/rec only, not nurse response */
+const F1_EAST_SHAFT_X = 728;
+
 const FLOOR1_WAYPOINTS: Waypoint[] = [
   ...coreWaypoints(),
-  { id: 'exit_s', x: 50, y: 92, transit: 'exit' },
-  { id: 'hall_w', x: 28, y: 49 },
-  { id: 'hall_mid', x: 50, y: 49 },
-  { id: 'hall_e', x: 74, y: 49 },
-  { id: 'hall_v', x: 50, y: 38 },
-  { id: 'hall_s', x: 50, y: 62 },
-  { id: 'reception', x: 31, y: 21 },
+  { id: 'exit_s', ...svgToPct(F1_MID_X, 720), transit: 'exit' },
+  { id: 'hall_w', ...svgToPct(F1_WEST_X, F1_EW_Y) },
+  { id: 'hall_w_n', ...svgToPct(F1_WEST_X, F1_NORTH_Y) },
+  { id: 'hall_n_e', ...svgToPct(F1_NURSE_WEST_X, F1_NORTH_Y) },
+  { id: 'hall_mid', ...svgToPct(F1_MID_X, F1_EW_Y) },
+  { id: 'hall_e', ...svgToPct(F1_EAST_X, F1_EW_Y) },
+  { id: 'hall_e_vert', ...svgToPct(F1_EAST_SHAFT_X, F1_EW_Y) },
+  { id: 'hall_en', ...svgToPct(F1_EAST_SHAFT_X, 262) },
+  { id: 'hall_ev_mid', ...svgToPct(F1_EAST_SHAFT_X, 312) },
+  { id: 'hall_w_s', ...svgToPct(F1_WEST_X, F1_SOUTH_Y) },
+  { id: 'hall_sw', ...svgToPct(318, F1_SOUTH_Y) },
+  { id: 'hall_s_mid', ...svgToPct(438, F1_SOUTH_Y) },
+  { id: 'hall_s', ...svgToPct(620, F1_SOUTH_Y) },
+  { id: 'hall_es', ...svgToPct(736, F1_SOUTH_Y) },
+  ...publicSpaceWaypointPair('reception', 368, 179, 368, 250),
   { id: 'dining', ...svgToPct(610, 179) },
-  { id: 'nurse', x: 67, y: 21 },
-  { id: 'rec', x: 74, y: 68 },
-  { id: 'pt', x: 74, y: 38 },
+  ...publicSpaceWaypointPair('nurse', 808, 179, 808, 250),
+  ...publicSpaceWaypointPair('pt', 808, 342, 708, 342),
+  { id: 'pt_hall', ...svgToPct(728, 342) },
+  ...publicSpaceWaypointPair('rec', 808, 554, 728, 554),
   ...roomWaypointPair('room101', 318, 627, 568),
   ...roomWaypointPair('room102', 438, 627, 568),
   ...roomWaypointPair('room103', 607, 507, 448),
   ...roomWaypointPair('room104', 607, 632, 632),
 ];
+
+/** Public/clinical space with interior + doorway (matches PublicSpace in FloorMapLayouts). */
+function publicSpaceWaypointPair(
+  prefix: string,
+  centerX: number,
+  centerY: number,
+  doorX: number,
+  doorY: number,
+): Waypoint[] {
+  return [
+    { id: `${prefix}_in`, ...svgToPct(centerX, centerY) },
+    { id: `${prefix}_door`, ...svgToPct(doorX, doorY) },
+  ];
+}
 
 function roomWaypointPair(
   prefix: string,
@@ -101,17 +150,31 @@ const FLOOR1_EDGES: [string, string][] = [
   ['hall_mid', 'hall_e'],
   ['elev2', 'stairs_e'],
   ['stairs_e', 'hall_e'],
-  ['hall_mid', 'hall_v'],
-  ['hall_v', 'reception'],
-  ['hall_v', 'dining'],
-  ['hall_v', 'nurse'],
-  ['hall_mid', 'hall_s'],
+  ['hall_e', 'hall_e_vert'],
+  ['hall_e_vert', 'hall_ev_mid'],
+  ['hall_ev_mid', 'hall_en'],
+  ...roomEdges('reception', 'hall_w_n'),
+  ['nurse_door', 'hall_n_e'],
+  ['hall_n_e', 'hall_w_n'],
+  ['hall_w_n', 'hall_w'],
+  ['nurse_door', 'nurse_in'],
+  ['nurse_in', 'nurse_door'],
+  ['hall_ev_mid', 'pt_hall'],
+  ['pt_hall', 'pt_door'],
+  ['pt_door', 'pt_in'],
+  ['pt_in', 'pt_door'],
+  ['reception_door', 'hall_w_s'],
+  ['hall_e_vert', 'hall_es'],
+  ['hall_es', 'hall_s'],
+  ['hall_w', 'hall_w_s'],
+  ['hall_w_s', 'hall_sw'],
+  ['hall_sw', 'hall_s_mid'],
+  ['hall_s_mid', 'hall_s'],
+  ...roomEdges('rec', 'hall_es'),
   ...roomEdges('room103', 'hall_s'),
   ...roomEdges('room104', 'hall_s'),
-  ...roomEdges('room101', 'hall_w'),
-  ...roomEdges('room102', 'hall_w'),
-  ['hall_e', 'pt'],
-  ['hall_e', 'rec'],
+  ...roomEdges('room101', 'hall_sw'),
+  ...roomEdges('room102', 'hall_s_mid'),
   ['hall_s', 'exit_s'],
 ];
 
@@ -344,6 +407,116 @@ function nearestWaypointId(position: Position, floor: number): string {
   return bestId;
 }
 
+function doorWaypoints(graph: FloorGraph): Waypoint[] {
+  return graph.waypoints.filter((w) => w.id.endsWith('_door'));
+}
+
+function distToDoorSegment(
+  position: Position,
+  doorPos: Position,
+  inPos: Position,
+): number {
+  const span = dist(doorPos, inPos);
+  if (span < 1) return dist(position, doorPos);
+  const along =
+    ((position.x - doorPos.x) * (inPos.x - doorPos.x) +
+      (position.y - doorPos.y) * (inPos.y - doorPos.y)) /
+    (span * span);
+  if (along < -0.15 || along > 1.15) {
+    return Math.min(dist(position, doorPos), dist(position, inPos));
+  }
+  const proj = {
+    x: doorPos.x + along * (inPos.x - doorPos.x),
+    y: doorPos.y + along * (inPos.y - doorPos.y),
+  };
+  return dist(position, proj);
+}
+
+function doorPairEngaged(
+  position: Position,
+  doorPos: Position,
+  inPos: Position,
+): boolean {
+  return (
+    dist(position, doorPos) < DOOR_COMMIT_PCT + 2 ||
+    dist(position, inPos) < DOOR_ZONE_PCT ||
+    distToDoorSegment(position, doorPos, inPos) < DOOR_ZONE_PCT
+  );
+}
+
+/** Only the matching door↔room threshold — not every doorway on the floor. */
+function shouldPassDoorUnimpeded(
+  position: Position,
+  goal: Position,
+  floor: number,
+): boolean {
+  if (floor === 1 && crossesPhysioNorthWall(position, goal)) {
+    return false;
+  }
+
+  const graph = getGraph(floor);
+  for (const door of doorWaypoints(graph)) {
+    const doorPos = { x: door.x, y: door.y };
+    const interior = waypointById(graph, door.id.replace('_door', '_in'));
+    if (!interior) continue;
+    const inPos = { x: interior.x, y: interior.y };
+
+    const posEngaged = doorPairEngaged(position, doorPos, inPos);
+    const goalEngaged = doorPairEngaged(goal, doorPos, inPos);
+    if (!posEngaged || !goalEngaged) continue;
+
+    const goalInside = dist(goal, inPos) + 1 < dist(goal, doorPos);
+    const goalOutside = dist(goal, doorPos) + 1 < dist(goal, inPos);
+    const fromInside = dist(position, inPos) + 0.5 < dist(position, doorPos);
+
+    if ((fromInside && goalOutside) || (!fromInside && goalInside)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isEnteringTargetRoom(
+  position: Position,
+  targetWaypointId: string,
+  floor: number,
+): boolean {
+  const goalRoom = roomPrefixFromWaypointId(targetWaypointId);
+  if (!goalRoom) return false;
+  const graph = getGraph(floor);
+  const doorWp = waypointById(graph, roomDoorWaypointId(goalRoom));
+  const inWp = waypointById(graph, roomInteriorWaypointId(goalRoom));
+  if (!doorWp || !inWp) return false;
+  const doorPos = { x: doorWp.x, y: doorWp.y };
+  const inPos = { x: inWp.x, y: inWp.y };
+  return doorPairEngaged(position, doorPos, inPos);
+}
+
+/** Wall-clamped step, or linear only through the matching door gap. */
+function staffMovementStep(
+  position: Position,
+  goal: Position,
+  maxStepPct: number,
+  floor: number,
+): Position {
+  if (
+    shouldPassDoorUnimpeded(position, goal, floor) &&
+    !(floor === 1 && crossesPhysioNorthWall(position, goal))
+  ) {
+    return stepTowardLinear(position, goal, maxStepPct);
+  }
+  return stepTowardWithWalls(position, goal, maxStepPct, floor);
+}
+
+/** Block hall diagonals that cut through the physiotherapy north wall only. */
+function hallShortcutBlocked(position: Position, goal: Position, floor: number): boolean {
+  return floor === 1 && crossesPhysioNorthWall(position, goal);
+}
+
+function staffStoppedAtWall(from: Position, to: Position): boolean {
+  return Math.hypot(to.x - from.x, to.y - from.y) < 0.0005;
+}
+
 function isRoomInterior(id: string): boolean {
   return id.endsWith('_in');
 }
@@ -352,7 +525,231 @@ function isRoomDoor(id: string): boolean {
   return id.endsWith('_door');
 }
 
-function pickNeighbor(graph: FloorGraph, fromId: string, excludeId?: string): string {
+function isHallWaypointId(id: string): boolean {
+  return (
+    id.startsWith('hall_') ||
+    (TRANSIT_CORE_IDS as readonly string[]).includes(id as (typeof TRANSIT_CORE_IDS)[number]) ||
+    (OUTDOOR_EXIT_IDS as readonly string[]).includes(id as (typeof OUTDOOR_EXIT_IDS)[number])
+  );
+}
+
+/** Straight segment only for doorway ↔ room interior; corridors use Manhattan steps. */
+function usesStraightCorridorSegment(fromId: string, toId: string): boolean {
+  if (isRoomInterior(fromId) && isRoomDoor(toId)) return true;
+  if (isRoomDoor(fromId) && isRoomInterior(toId)) return true;
+  return false;
+}
+
+function roomPrefixFromWaypointId(id: string): string | null {
+  if (isRoomInterior(id)) return id.slice(0, -3);
+  if (isRoomDoor(id)) return id.slice(0, -5);
+  return null;
+}
+
+function roomDoorWaypointId(prefix: string): string {
+  return `${prefix}_door`;
+}
+
+function roomInteriorWaypointId(prefix: string): string {
+  return `${prefix}_in`;
+}
+
+/** Goal waypoint for staff responding to a resident (enter room interior when applicable). */
+export function responseTargetWaypointForPosition(position: Position, floor: number): string {
+  const graph = getGraph(floor);
+  const nearest = nearestWaypointId(position, floor);
+  if (!isRoomDoor(nearest)) return nearest;
+
+  const prefix = roomPrefixFromWaypointId(nearest);
+  if (!prefix) return nearest;
+
+  const interiorId = roomInteriorWaypointId(prefix);
+  const doorWp = waypointById(graph, nearest);
+  const inWp = waypointById(graph, interiorId);
+  if (doorWp && inWp && dist(position, inWp) <= dist(position, doorWp) + 0.5) {
+    return interiorId;
+  }
+  return nearest;
+}
+
+/** Next graph goal when responding — enforces door → hall → door → room. */
+function resolveResponseGoalWaypoint(fromId: string, finalGoalId: string): string {
+  const fromRoom = roomPrefixFromWaypointId(fromId);
+  const goalRoom = roomPrefixFromWaypointId(finalGoalId);
+
+  if (isRoomInterior(fromId) && fromRoom) {
+    const doorId = roomDoorWaypointId(fromRoom);
+    if (
+      goalRoom === fromRoom &&
+      (isRoomInterior(finalGoalId) || isRoomDoor(finalGoalId))
+    ) {
+      return finalGoalId;
+    }
+    return doorId;
+  }
+
+  if (isRoomInterior(finalGoalId) && goalRoom) {
+    const doorId = roomDoorWaypointId(goalRoom);
+    if (fromId === doorId || fromId === finalGoalId) return finalGoalId;
+    return doorId;
+  }
+
+  return finalGoalId;
+}
+
+function responseStepTargetForStaff(
+  position: Position,
+  finalGoalWaypointId: string,
+  floor: number,
+): Position {
+  const graph = getGraph(floor);
+  const fromId = nearestWaypointId(position, floor);
+  const stepId = resolveResponseGoalWaypoint(fromId, finalGoalWaypointId);
+  const wp = waypointById(graph, stepId);
+  return wp ? { x: wp.x, y: wp.y } : position;
+}
+
+function staffResponseGoal(
+  position: Position,
+  targetPosition: Position,
+  targetWaypointId: string,
+  floor: number,
+): Position {
+  if (dist(position, targetPosition) < STAFF_RESPONSE_ARRIVAL_PCT) {
+    return targetPosition;
+  }
+  if (isPositionInRoomInterior(position, floor)) {
+    return targetPosition;
+  }
+
+  const graph = getGraph(floor);
+  const goalRoom = roomPrefixFromWaypointId(targetWaypointId);
+  if (goalRoom) {
+    const doorWp = waypointById(graph, roomDoorWaypointId(goalRoom));
+    if (doorWp && dist(position, doorWp) < DOOR_COMMIT_PCT) {
+      return targetPosition;
+    }
+  }
+
+  if (isEnteringTargetRoom(position, targetWaypointId, floor)) {
+    return targetPosition;
+  }
+
+  if (isPositionInHallway(position, floor)) {
+    const fromId = nearestWaypointId(position, floor);
+    const stepId = resolveResponseGoalWaypoint(fromId, targetWaypointId);
+    if (!isRoomDoor(stepId) && !isRoomInterior(stepId)) {
+      return targetPosition;
+    }
+    const wp = waypointById(graph, stepId);
+    if (wp && isRoomDoor(stepId) && dist(position, wp) < DOOR_COMMIT_PCT) {
+      return targetPosition;
+    }
+    return wp ? { x: wp.x, y: wp.y } : responseStepTargetForStaff(position, targetWaypointId, floor);
+  }
+  return responseStepTargetForStaff(position, targetWaypointId, floor);
+}
+
+function hasReachedResident(position: Position, targetPosition: Position): boolean {
+  return dist(position, targetPosition) < STAFF_RESPONSE_ARRIVAL_PCT;
+}
+
+function pickResponseNeighbor(
+  graph: FloorGraph,
+  fromId: string,
+  excludeId: string | undefined,
+  finalGoalId: string,
+): string {
+  const stepGoal = resolveResponseGoalWaypoint(fromId, finalGoalId);
+
+  if (isRoomInterior(fromId) && isRoomDoor(stepGoal)) {
+    const doorId = fromId.replace('_in', '_door');
+    if (stepGoal === doorId && graph.edges.get(fromId)?.has(doorId)) return doorId;
+  }
+
+  if (isRoomDoor(fromId) && isRoomInterior(stepGoal)) {
+    const inId = fromId.replace('_door', '_in');
+    if (stepGoal === inId && graph.edges.get(fromId)?.has(inId)) return inId;
+  }
+
+  const nextHop = bfsNextHop(graph, fromId, stepGoal);
+  if (nextHop) return nextHop;
+
+  const neighbors = Array.from(graph.edges.get(fromId) ?? []).filter((id) => id !== excludeId);
+  if (neighbors.length === 0) return fromId;
+
+  const allowed = neighbors.filter(
+    (id) => !isRoomInterior(id) || id === stepGoal,
+  );
+  const pool = allowed.length > 0 ? allowed : neighbors;
+  const goal = waypointById(graph, stepGoal);
+  if (!goal) return pool[0];
+
+  let best = pool[0];
+  let bestD = Infinity;
+  for (const id of pool) {
+    const wp = waypointById(graph, id);
+    if (!wp) continue;
+    const d = dist(wp, goal);
+    if (d < bestD) {
+      bestD = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+/** Keep nav state on room graph when position is inside a room but nav was on a hallway node. */
+function reanchorNavIfInsideRoom(
+  graph: FloorGraph,
+  navFromId: string,
+  navToId: string,
+  navProgress: number,
+  position: Position,
+  floor: number,
+): { navFromId: string; navToId: string; navProgress: number } {
+  if (!isPositionInRoomInterior(position, floor)) {
+    const nearest = nearestWaypointId(position, floor);
+    if (isRoomDoor(nearest)) {
+      const inId = nearest.replace('_door', '_in');
+      if (graph.edges.get(nearest)?.has(inId)) {
+        return { navFromId: nearest, navToId: inId, navProgress: 0 };
+      }
+    }
+    return { navFromId, navToId, navProgress };
+  }
+
+  const nearest = nearestWaypointId(position, floor);
+  const nearRoom = roomPrefixFromWaypointId(nearest);
+  if (!nearRoom) return { navFromId, navToId, navProgress };
+
+  const navRoom = roomPrefixFromWaypointId(navFromId);
+  if (navRoom === nearRoom) return { navFromId, navToId, navProgress };
+
+  if (isRoomInterior(nearest)) {
+    const doorId = roomDoorWaypointId(nearRoom);
+    const neighbors = graph.edges.get(nearest);
+    return {
+      navFromId: nearest,
+      navToId: neighbors?.has(doorId) ? doorId : nearest,
+      navProgress: 0,
+    };
+  }
+
+  if (isRoomDoor(nearest)) {
+    return { navFromId: nearest, navToId, navProgress: 0 };
+  }
+
+  return { navFromId, navToId, navProgress };
+}
+
+function pickNeighbor(
+  graph: FloorGraph,
+  fromId: string,
+  excludeId?: string,
+  navToId?: string,
+  navProgress = 0,
+): string {
   const neighbors = graph.edges.get(fromId);
   if (!neighbors || neighbors.size === 0) return fromId;
   const options = Array.from(neighbors).filter((id) => id !== excludeId);
@@ -360,13 +757,20 @@ function pickNeighbor(graph: FloorGraph, fromId: string, excludeId?: string): st
 
   if (isRoomDoor(fromId)) {
     const interior = fromId.replace('_door', '_in');
-    if (pool.includes(interior) && Math.random() < 0.62) return interior;
+    if (pool.includes(interior)) return interior;
   }
   if (isRoomInterior(fromId)) {
     const door = fromId.replace('_in', '_door');
-    if (pool.includes(door) && Math.random() < 0.58) return door;
+    if (navToId === door && navProgress < 0.88 && pool.includes(door)) {
+      return door;
+    }
+    if (pool.includes(door) && Math.random() < 0.3) return door;
   }
   if (!isRoomDoor(fromId) && !isRoomInterior(fromId)) {
+    const corridor = pool.filter(isHallWaypointId);
+    if (corridor.length > 0) {
+      return corridor[Math.floor(Math.random() * corridor.length)];
+    }
     const doors = pool.filter(isRoomDoor);
     if (doors.length > 0 && Math.random() < 0.14) {
       return doors[Math.floor(Math.random() * doors.length)];
@@ -388,10 +792,42 @@ function pickNeighbor(graph: FloorGraph, fromId: string, excludeId?: string): st
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+function edgePathLength(graph: FloorGraph, fromId: string, toId: string): number {
+  const from = waypointById(graph, fromId)!;
+  const to = waypointById(graph, toId)!;
+  if (usesStraightCorridorSegment(fromId, toId)) return dist(from, to);
+  const dx = Math.abs(to.x - from.x);
+  const dy = Math.abs(to.y - from.y);
+  if (dx < 0.2 || dy < 0.2) return dist(from, to);
+  return dx + dy;
+}
+
 function positionOnEdge(graph: FloorGraph, fromId: string, toId: string, progress: number): Position {
   const from = waypointById(graph, fromId)!;
   const to = waypointById(graph, toId)!;
-  return lerpPos(from, to, Math.max(0, Math.min(1, progress)));
+  const t = Math.max(0, Math.min(1, progress));
+
+  if (usesStraightCorridorSegment(fromId, toId)) {
+    return lerpPos(from, to, t);
+  }
+
+  const dx = Math.abs(to.x - from.x);
+  const dy = Math.abs(to.y - from.y);
+  if (dx < 0.2 || dy < 0.2) {
+    return lerpPos(from, to, t);
+  }
+
+  const via = { x: to.x, y: from.y };
+  const leg1 = dist(from, via);
+  const leg2 = dist(via, to);
+  const total = leg1 + leg2;
+  if (total < 0.01) return lerpPos(from, to, t);
+
+  const walked = t * total;
+  if (walked <= leg1) {
+    return lerpPos(from, via, walked / leg1);
+  }
+  return lerpPos(via, to, (walked - leg1) / leg2);
 }
 
 /** Attach corridor navigation state so movement stays on graph edges */
@@ -473,6 +909,8 @@ export interface NavigablePerson {
   navFromId?: string;
   navToId?: string;
   navProgress?: number;
+  /** Staff free movement: current hallway wander goal (map %) */
+  moveTarget?: Position;
   emergencyCall?: unknown;
   inTransit?: {
     fromFloor: number;
@@ -582,53 +1020,475 @@ function transitUseChance(person: NavigablePerson, transitType: 'elevator' | 'st
   return isStaff ? 0.14 : 0.07;
 }
 
+export interface ResponseTarget {
+  residentId: string;
+  targetFloor: number;
+  targetWaypointId: string;
+  targetPosition: Position;
+}
+
 export interface AdvanceOptions {
   /** Per-tick speed scale (1 = default elderly pacing at 50ms tick) */
   speedScale?: number;
+  /** When set, staff walk the corridor graph toward this resident */
+  responseTarget?: ResponseTarget;
 }
 
-/** Move one step along corridor graph — never through walls */
+function bfsNextHop(graph: FloorGraph, fromId: string, goalId: string): string | null {
+  if (fromId === goalId) return null;
+  const queue: string[] = [fromId];
+  const visited = new Set<string>([fromId]);
+  const parent = new Map<string, string>();
+
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const neighbor of graph.edges.get(id) ?? []) {
+      if (visited.has(neighbor)) continue;
+      visited.add(neighbor);
+      parent.set(neighbor, id);
+      if (neighbor === goalId) {
+        let step = goalId;
+        while (parent.get(step) !== fromId && parent.has(step)) {
+          step = parent.get(step)!;
+        }
+        return step;
+      }
+      queue.push(neighbor);
+    }
+  }
+  return null;
+}
+
+function pickNeighborTowardGoal(
+  graph: FloorGraph,
+  fromId: string,
+  excludeId: string | undefined,
+  goalId: string,
+): string {
+  const nextHop = bfsNextHop(graph, fromId, goalId);
+  if (nextHop) return nextHop;
+
+  const neighbors = Array.from(graph.edges.get(fromId) ?? []).filter((id) => id !== excludeId);
+  if (neighbors.length === 0) return fromId;
+
+  const goal = waypointById(graph, goalId);
+  if (!goal) return neighbors[0];
+
+  let best = neighbors[0];
+  let bestD = Infinity;
+  for (const id of neighbors) {
+    const wp = waypointById(graph, id);
+    if (!wp) continue;
+    const d = dist(wp, goal);
+    if (d < bestD) {
+      bestD = d;
+      best = id;
+    }
+  }
+  return best;
+}
+
+export function tryStartFloorTransitTo(
+  person: NavigablePerson,
+  toFloor: number,
+): { fromFloor: number; toFloor: number; method: 'elevator' | 'stairs' } | null {
+  const floor = person.floor;
+  if (floor === toFloor) return null;
+
+  if (floor === 4 || toFloor === 4) {
+    return { fromFloor: floor, toFloor, method: 'elevator' };
+  }
+
+  const diff = Math.abs(toFloor - floor);
+  if (diff === 1) {
+    return { fromFloor: floor, toFloor, method: 'stairs' };
+  }
+
+  return { fromFloor: floor, toFloor, method: 'elevator' };
+}
+
+function residentMovementFrozen(person: NavigablePerson): boolean {
+  return (
+    person.type === 'resident' &&
+    (person.status === 'alert' || person.status === 'warning')
+  );
+}
+
+function stepTowardLinear(from: Position, to: Position, maxStepPct: number): Position {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const d = Math.hypot(dx, dy);
+  if (d <= maxStepPct) return to;
+  return { x: from.x + (dx / d) * maxStepPct, y: from.y + (dy / d) * maxStepPct };
+}
+
+function randomHallwayWaypointPosition(floor: number): Position {
+  const graph = getGraph(floor);
+  const pool = graph.waypoints.filter(
+    (w) =>
+      w.id.startsWith('hall_') ||
+      w.id.startsWith('elev') ||
+      w.id.startsWith('stairs_') ||
+      w.transit,
+  );
+  const wp = pool[Math.floor(Math.random() * pool.length)] ?? graph.waypoints[0];
+  return { x: wp.x, y: wp.y };
+}
+
+function progressOnEdge(
+  graph: FloorGraph,
+  fromId: string,
+  toId: string,
+  position: Position,
+): number {
+  const a = waypointById(graph, fromId);
+  const b = waypointById(graph, toId);
+  if (!a || !b) return 0;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-9) return 0;
+  const t = ((position.x - a.x) * dx + (position.y - a.y) * dy) / lenSq;
+  return Math.max(0, Math.min(1, t));
+}
+
+/** Straight diagonal in halls/rooms; stop at walls; graph only outside walkable areas. */
+function staffStepWithWalls(
+  position: Position,
+  goal: Position,
+  maxStepPct: number,
+  floor: number,
+): Position {
+  if (shouldPassDoorUnimpeded(position, goal, floor)) {
+    return stepTowardLinear(position, goal, maxStepPct);
+  }
+
+  const inHall = isPositionInHallway(position, floor);
+  const inRoom = isPositionInRoomInterior(position, floor);
+  const inPublic = isPositionInPublicInterior(position, floor);
+
+  if (inPublic && !sharesWalkableInterior(position, goal, floor)) {
+    const leavingSpace =
+      !isPositionInPublicInterior(goal, floor) && !isPositionInHallway(goal, floor);
+    if (leavingSpace) {
+      const graph = getGraph(floor);
+      const fromId = nearestWaypointId(position, floor);
+      const doorId = fromId.endsWith('_in') ? fromId.replace('_in', '_door') : null;
+      if (doorId && graph.edges.get(fromId)?.has(doorId)) {
+        const doorWp = waypointById(graph, doorId);
+        if (doorWp) {
+          goal = { x: doorWp.x, y: doorWp.y };
+        }
+      }
+    }
+  }
+
+  if ((inHall || inRoom || inPublic) && !hallShortcutBlocked(position, goal, floor)) {
+    return staffMovementStep(position, goal, maxStepPct, floor);
+  }
+
+  if (!inHall && !inRoom) {
+    const graph = getGraph(floor);
+    const fromId = nearestWaypointId(position, floor);
+    const goalId = nearestWaypointId(goal, floor);
+
+    if (fromId !== goalId) {
+      const hop =
+        bfsNextHop(graph, fromId, goalId) ??
+        pickNeighborTowardGoal(graph, fromId, undefined, goalId);
+      const hopWp = waypointById(graph, hop);
+      if (hopWp) {
+        goal = { x: hopWp.x, y: hopWp.y };
+      }
+    }
+  }
+
+  return staffMovementStep(position, goal, maxStepPct, floor);
+}
+
+/** Staff: diagonal steps in beige halls; blocked by brown wall lines (door gaps open). */
+function advanceStaffPosition<T extends NavigablePerson>(
+  person: T,
+  options: AdvanceOptions = {},
+): T {
+  const responseTarget = options.responseTarget;
+  const responding = Boolean(responseTarget);
+  const speedScale = options.speedScale ?? 1;
+  const floor = person.floor;
+  const wanderSpeed = 0.022 * speedScale;
+  const respondSpeed = 0.032 * speedScale;
+
+  if (!responding) {
+    person = { ...person, isMoving: true };
+  } else if (!person.isMoving && !responseTarget) {
+    return person;
+  }
+
+  if (responding && responseTarget) {
+    const { targetFloor, targetPosition, targetWaypointId } = responseTarget;
+
+    if (floor !== targetFloor) {
+      const transitPos = getTransitHoldPosition(floor, person.id, 'elevator');
+      const nextPos = staffStepWithWalls(person.position, transitPos, respondSpeed, floor);
+
+      if (dist(nextPos, transitPos) < 2.2) {
+        const directed = tryStartFloorTransitTo(person, targetFloor);
+        if (directed) {
+          return {
+            ...person,
+            position: nextPos,
+            moveTarget: undefined,
+            isMoving: true,
+            inTransit: { ...directed, progress: 0 },
+          };
+        }
+      }
+
+      return { ...person, position: nextPos, moveTarget: transitPos, isMoving: true };
+    }
+
+    if (hasReachedResident(person.position, targetPosition)) {
+      return {
+        ...person,
+        moveTarget: undefined,
+        isMoving: false,
+      };
+    }
+
+    let goal = staffResponseGoal(
+      person.position,
+      targetPosition,
+      targetWaypointId,
+      floor,
+    );
+    if (
+      person.moveTarget &&
+      shouldPassDoorUnimpeded(person.position, person.moveTarget, floor) &&
+      dist(person.position, person.moveTarget) < DOOR_COMMIT_PCT + 3
+    ) {
+      goal = person.moveTarget;
+    }
+    const nextPos = staffStepWithWalls(person.position, goal, respondSpeed, floor);
+
+    if (hasReachedResident(nextPos, targetPosition)) {
+      return {
+        ...person,
+        position: nextPos,
+        moveTarget: undefined,
+        isMoving: false,
+      };
+    }
+
+    if (staffStoppedAtWall(person.position, nextPos)) {
+      return {
+        ...person,
+        moveTarget: goal,
+        isMoving: false,
+      };
+    }
+
+    return {
+      ...person,
+      position: nextPos,
+      moveTarget: goal,
+      isMoving: true,
+    };
+  }
+
+  let moveTarget = person.moveTarget;
+  if (!moveTarget || dist(person.position, moveTarget) < 1.2) {
+    moveTarget = randomHallwayWaypointPosition(floor);
+  }
+  if (
+    person.moveTarget &&
+    shouldPassDoorUnimpeded(person.position, person.moveTarget, floor) &&
+    dist(person.position, person.moveTarget) < DOOR_COMMIT_PCT + 3
+  ) {
+    moveTarget = person.moveTarget;
+  }
+
+  let nextPos = staffStepWithWalls(person.position, moveTarget, wanderSpeed, floor);
+
+  if (staffStoppedAtWall(person.position, nextPos)) {
+    return {
+      ...person,
+      moveTarget,
+      isMoving: false,
+    };
+  }
+
+  if (dist(nextPos, person.position) < 0.0008) {
+    moveTarget = randomHallwayWaypointPosition(floor);
+    nextPos = staffStepWithWalls(person.position, moveTarget, wanderSpeed, floor);
+    if (staffStoppedAtWall(person.position, nextPos)) {
+      return {
+        ...person,
+        moveTarget,
+        isMoving: false,
+      };
+    }
+  }
+
+  return {
+    ...person,
+    position: nextPos,
+    moveTarget,
+    isMoving: true,
+  };
+}
+
+/** Residents: corridor graph with wall clamp. Staff (not in transit): free diagonal in halls. */
 export function advancePersonPosition<T extends NavigablePerson>(
   person: T,
   options: AdvanceOptions = {},
 ): T {
   if (person.emergencyCall) return person;
-  if (person.type === 'resident' && person.status === 'alert') return person;
-  if (!person.isMoving) return person;
+  if (residentMovementFrozen(person)) return person;
 
-  const speedScale = options.speedScale ?? 1;
+  if (person.type === 'staff' && !person.inTransit) {
+    return advanceStaffPosition(person, options);
+  }
+
+  const responseTarget = person.type === 'staff' ? options.responseTarget : undefined;
+  const responding = Boolean(responseTarget);
+
+  if (person.type === 'resident' && !residentMovementFrozen(person)) {
+    person = { ...person, isMoving: true };
+  }
+
+  if (!person.isMoving && !responding) return person;
+
+  const speedScale = (options.speedScale ?? 1) * (responding ? 1.65 : 1);
   const floor = person.floor;
   const graph = getGraph(floor);
 
   let navFromId = person.navFromId ?? nearestWaypointId(person.position, floor);
-  let navToId = person.navToId ?? pickNeighbor(graph, navFromId);
+  let navToId = person.navToId ?? pickNeighbor(graph, navFromId, undefined, undefined, 0);
   let navProgress = person.navProgress ?? 0;
 
   const fromWp = waypointById(graph, navFromId);
   const toWp = waypointById(graph, navToId);
   if (!fromWp || !toWp) {
     const fresh = createNavigationState(floor, person.position);
-    return { ...person, ...fresh };
+    return { ...person, ...fresh, isMoving: true };
   }
 
-  const edgeLen = Math.max(dist(fromWp, toWp), 0.5);
+  if (responding && responseTarget) {
+    const { targetFloor, targetWaypointId, targetPosition } = responseTarget;
 
-  // Elderly residents: ~2.5% of map per second; staff ~5%
+    const reanchored = reanchorNavIfInsideRoom(
+      graph,
+      navFromId,
+      navToId,
+      navProgress,
+      person.position,
+      floor,
+    );
+    navFromId = reanchored.navFromId;
+    navToId = reanchored.navToId;
+    navProgress = reanchored.navProgress;
+
+    let fromWpNow = waypointById(graph, navFromId);
+    let toWpNow = waypointById(graph, navToId);
+    if (!fromWpNow || !toWpNow) {
+      const fresh = createNavigationState(floor, person.position);
+      return { ...person, ...fresh, isMoving: true };
+    }
+
+    if (floor !== targetFloor) {
+      const atWp = fromWpNow;
+      if (atWp.transit) {
+        const directed = tryStartFloorTransitTo(person, targetFloor);
+        if (directed) {
+          const hold = getTransitHoldPosition(person.floor, person.id, directed.method);
+          return {
+            ...person,
+            position: hold,
+            navFromId,
+            navToId,
+            navProgress: 0,
+            isMoving: true,
+            inTransit: { ...directed, progress: 0 },
+          };
+        }
+      }
+      navProgress += 0.04 / Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
+      if (navProgress >= 1) {
+        navFromId = navToId;
+        navToId = pickResponseNeighbor(graph, navFromId, person.navFromId, targetWaypointId);
+        navProgress = 0;
+        fromWpNow = waypointById(graph, navFromId)!;
+        toWpNow = waypointById(graph, navToId)!;
+        const transitWp = fromWpNow;
+        if (transitWp?.transit && Math.random() < 0.55) {
+          const directed = tryStartFloorTransitTo(person, targetFloor);
+          if (directed) {
+            return {
+              ...person,
+              position: getTransitHoldPosition(person.floor, person.id, directed.method),
+              navFromId,
+              navToId,
+              navProgress: 0,
+              isMoving: true,
+              inTransit: { ...directed, progress: 0 },
+            };
+          }
+        }
+      }
+      const desired = positionOnEdge(graph, navFromId, navToId, navProgress);
+      return {
+        ...person,
+        position: stepTowardLinear(person.position, desired, 0.04 * speedScale),
+        navFromId,
+        navToId,
+        navProgress,
+        isMoving: true,
+      };
+    }
+
+    const arrived =
+      Math.hypot(person.position.x - targetPosition.x, person.position.y - targetPosition.y) <
+      1.2;
+    if (!arrived) {
+      const edgeLen = Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
+      const speedPerTick = 0.045 * speedScale;
+      navProgress += speedPerTick / edgeLen;
+
+      if (navProgress >= 1) {
+        navFromId = navToId;
+        const prev = person.navToId;
+        navToId = pickResponseNeighbor(graph, navFromId, prev, targetWaypointId);
+        navProgress = 0;
+        fromWpNow = waypointById(graph, navFromId)!;
+        toWpNow = waypointById(graph, navToId)!;
+      }
+
+      const desired = positionOnEdge(graph, navFromId, navToId, navProgress);
+      return {
+        ...person,
+        position: stepTowardLinear(person.position, desired, 0.04 * speedScale),
+        navFromId,
+        navToId,
+        navProgress,
+        isMoving: true,
+      };
+    }
+
+    return {
+      ...person,
+      position: { ...targetPosition },
+      isMoving: true,
+    };
+  }
+
+  const edgeLen = Math.max(edgePathLength(graph, navFromId, navToId), 0.5);
+
   const speedPerTick =
-    (person.type === 'staff'
-      ? 0.025
-      : person.floor === 3
-        ? 0.02
-        : person.floor === 4
-          ? 0.018
-          : 0.022) * speedScale;
+    (person.floor === 3 ? 0.02 : person.floor === 4 ? 0.018 : 0.022) * speedScale;
 
-  const moveChance =
-    person.type === 'staff'
-      ? 0.35
-      : person.floor === 3
-        ? 0.22
-        : 0.18;
+  const moveChance = person.floor === 3 ? 0.22 : 0.18;
+
+  const hold = positionOnEdge(graph, navFromId, navToId, navProgress);
 
   if (Math.random() > moveChance) {
     return {
@@ -636,7 +1496,7 @@ export function advancePersonPosition<T extends NavigablePerson>(
       navFromId,
       navToId,
       navProgress,
-      position: positionOnEdge(graph, navFromId, navToId, navProgress),
+      position: stepTowardLinear(person.position, hold, speedPerTick * 0.35),
     };
   }
 
@@ -645,7 +1505,7 @@ export function advancePersonPosition<T extends NavigablePerson>(
   if (navProgress >= 1) {
     navFromId = navToId;
     const prev = person.navToId;
-    navToId = pickNeighbor(graph, navFromId, prev);
+    navToId = pickNeighbor(graph, navFromId, prev, navToId, navProgress);
     navProgress = 0;
 
     const atWp = waypointById(graph, navFromId)!;
@@ -665,11 +1525,11 @@ export function advancePersonPosition<T extends NavigablePerson>(
     }
   }
 
-  const position = positionOnEdge(graph, navFromId, navToId, navProgress);
+  const desired = positionOnEdge(graph, navFromId, navToId, navProgress);
 
   return {
     ...person,
-    position,
+    position: stepTowardLinear(person.position, desired, speedPerTick),
     navFromId,
     navToId,
     navProgress,

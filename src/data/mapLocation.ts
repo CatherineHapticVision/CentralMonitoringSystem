@@ -8,11 +8,19 @@ type Position = { x: number; y: number };
 
 const PUBLIC_LABELS: Record<string, string> = {
   reception: 'Reception',
+  reception_in: 'Reception',
+  reception_door: 'Reception (entrance)',
   dining: 'Dining hall',
   nurse: 'Nurse station',
+  nurse_in: 'Nurse station',
+  nurse_door: 'Nurse station (entrance)',
   nurse_st: 'Nurse station',
-  rec: 'Recreation area',
   pt: 'Physiotherapy',
+  pt_in: 'Physiotherapy',
+  pt_door: 'Physiotherapy (entrance)',
+  rec: 'Recreation area',
+  rec_in: 'Recreation area',
+  rec_door: 'Recreation area (entrance)',
   med: 'Medication room',
   lounge: 'Lounge',
   safe: 'Safe wandering area',
@@ -61,7 +69,7 @@ export function labelForWaypointId(waypointId: string, floor: number): string | 
 
   if (PUBLIC_LABELS[waypointId]) return PUBLIC_LABELS[waypointId];
 
-  if (waypointId.startsWith('hall_') || waypointId === 'hall_w' || waypointId === 'hall_e') {
+  if (waypointId.startsWith('hall_')) {
     return 'Hallway';
   }
   if (waypointId.startsWith('path_') || waypointId.startsWith('bench_')) {

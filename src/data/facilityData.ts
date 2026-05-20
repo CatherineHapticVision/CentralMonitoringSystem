@@ -1,7 +1,7 @@
 // Grandview Care Long-Term Care Facility - 124 Residents
 // Ontario, Canada
 
-import { enrichWithNavigation, createNavigationState, getSpawnNavigationState } from './mapNavigation';
+import { createNavigationState, getSpawnNavigationState } from './mapNavigation';
 import { roomNumberForResident } from './roomInventory';
 
 interface Person {
@@ -161,8 +161,28 @@ export function generateResidents(): Person[] {
       }
       const isMoving = Math.random() < movementProbability;
 
-      const lastSeenOptions = ['2m', '5m', '8m', '12m', '18m', '25m', '34m', '45m', '1.2h', '1.8h'];
-      const lastSeen = lastSeenOptions[Math.floor(Math.random() * lastSeenOptions.length)];
+      const recentLastSeen = [
+        'now',
+        '1m',
+        '2m',
+        '3m',
+        '4m',
+        '5m',
+        '6m',
+        '7m',
+        '8m',
+        '9m',
+        '10m',
+        '11m',
+        '12m',
+        '14m',
+        '15m',
+      ];
+      const staleLastSeen = ['22m', '31m', '42m', '58m', '1.1h'];
+      const lastSeen =
+        Math.random() < 0.07
+          ? staleLastSeen[Math.floor(Math.random() * staleLastSeen.length)]
+          : recentLastSeen[Math.floor(Math.random() * recentLastSeen.length)];
 
       residents.push({ id, name, status, location, isMoving, lastSeen });
       residentIndex++;
@@ -204,6 +224,11 @@ export function generateResidents(): Person[] {
   residents[10].name = 'Emma Richardson';
   residents[13].name = 'Thomas O\'Brien';
 
+  // A few stale last-seen examples (sidebar blue = older than 15m)
+  residents[20].lastSeen = '24m';
+  residents[55].lastSeen = '47m';
+  residents[110].lastSeen = '1.2h';
+
   // Critical statuses are pinned in place on the map
   for (const resident of residents) {
     if (resident.status !== 'normal') {
@@ -240,12 +265,12 @@ export function generateStaff(): Person[] {
     { id: 'PS08', name: 'Thomas Wilson', status: 'normal', location: 'Recreation Area (Floor 1)', isMoving: false, lastSeen: '12m' },
 
     // Supervisors
-    { id: 'SV01', name: 'Catherine Brown', status: 'normal', location: 'Office (Floor 1)', isMoving: false, lastSeen: '15m' },
-    { id: 'SV02', name: 'Richard Evans', status: 'normal', location: 'Nurse Station (Floor 2)', isMoving: false, lastSeen: '8m' },
+    { id: 'SV01', name: 'Catherine Brown', status: 'normal', location: 'Office (Floor 1)', isMoving: false, lastSeen: '12m' },
+    { id: 'SV02', name: 'Richard Evans', status: 'normal', location: 'Nurse Station (Floor 2)', isMoving: false, lastSeen: '38m' },
 
     // Other roles
     { id: 'PT01', name: 'Laura Chen', status: 'normal', location: 'In Transit: F2 → F1 (Elevator)', isMoving: true, lastSeen: 'now' },
-    { id: 'OT01', name: 'Kevin Patel', status: 'normal', location: 'Room 306 (Floor 3)', isMoving: false, lastSeen: '10m' },
+    { id: 'OT01', name: 'Kevin Patel', status: 'normal', location: 'Room 306 (Floor 3)', isMoving: false, lastSeen: '6m' },
   ];
 }
 
@@ -333,26 +358,40 @@ export function generateMapPeople(
     { id: 'PS06', floor: 3, position: { x: 52, y: 65 } },
     { id: 'PS07', floor: 2, position: { x: 50, y: 50 } },
     { id: 'PS08', floor: 1, position: { x: 70, y: 75 } },
-    { id: 'SV01', floor: 1, position: { x: 30, y: 25 } },
+    { id: 'SV01', floor: 1, position: { x: 30.7, y: 22.4 } },
     { id: 'SV02', floor: 2, position: { x: 77, y: 25 } },
     { id: 'PT01', floor: 2, position: { x: 35, y: 40 } },
     { id: 'OT01', floor: 3, position: { x: 62, y: 65 } },
   ];
 
+  const staffSpawnWaypoint: Record<string, string> = {
+    RN01: 'nurse_in',
+    RN03: 'med',
+    PS04: 'dining',
+    RP02: 'rec',
+    SV01: 'reception_in',
+  };
+
   for (const staffPos of staffPositions) {
     const staffMember = staffList.find(s => s.id === staffPos.id);
     if (staffMember) {
-      mapPeople.push(
-        enrichWithNavigation({
-          id: staffPos.id,
-          name: staffMember.name,
-          position: staffPos.position,
-          status: staffMember.status,
-          type: 'staff' as const,
-          isMoving: staffMember.isMoving ?? true,
-          floor: staffPos.floor,
-        }),
+      const nav = createNavigationState(
+        staffPos.floor,
+        undefined,
+        staffSpawnWaypoint[staffPos.id],
       );
+      mapPeople.push({
+        id: staffPos.id,
+        name: staffMember.name,
+        position: nav.position,
+        status: staffMember.status,
+        type: 'staff' as const,
+        isMoving: staffMember.isMoving ?? true,
+        floor: staffPos.floor,
+        navFromId: nav.navFromId,
+        navToId: nav.navToId,
+        navProgress: nav.navProgress,
+      });
     }
   }
 

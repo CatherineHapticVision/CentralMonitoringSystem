@@ -13,6 +13,15 @@ interface Person {
 
 import type { FacilityAlert } from '../types/alerts';
 import { countAlertsBySeverity, residentHighestAlertSeverity } from '../types/alerts';
+import { isLastSeenOlderThan } from '../utils/time';
+
+const LAST_SEEN_STALE_MINUTES = 15;
+
+function lastSeenToneClass(lastSeen?: string): string {
+  return isLastSeenOlderThan(lastSeen, LAST_SEEN_STALE_MINUTES)
+    ? 'text-blue-700 font-bold'
+    : 'text-slate-500';
+}
 
 interface LeftSidebarProps {
   residents: Person[];
@@ -164,9 +173,7 @@ export function LeftSidebar({ residents, staff, onResidentClick, onStaffClick, c
                   </div>
                 </div>
                 <div className="flex-shrink-0">
-                  <span className={`text-[9px] font-mono tabular-nums ${
-                    resident.isMoving ? 'text-blue-700 font-bold' : 'text-slate-500'
-                  }`}>
+                  <span className={`text-[9px] font-mono tabular-nums ${lastSeenToneClass(resident.lastSeen)}`}>
                     {resident.lastSeen || '—'}
                   </span>
                 </div>
@@ -206,9 +213,7 @@ export function LeftSidebar({ residents, staff, onResidentClick, onStaffClick, c
                   </div>
                 </div>
                 <div className="flex-shrink-0">
-                  <span className={`text-[9px] font-mono tabular-nums ${
-                    member.isMoving ? 'text-green-700 font-bold' : 'text-slate-500'
-                  }`}>
+                  <span className={`text-[9px] font-mono tabular-nums ${lastSeenToneClass(member.lastSeen)}`}>
                     {member.lastSeen || '—'}
                   </span>
                 </div>

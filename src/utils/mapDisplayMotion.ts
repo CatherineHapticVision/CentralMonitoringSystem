@@ -3,13 +3,18 @@ export interface MapPosition {
   y: number;
 }
 
-/** Max map-% per animation frame — keep in sync with FloorMap marker smoothing */
-export const MAX_DISPLAY_STEP = { resident: 0.055, staff: 0.1 } as const;
+/**
+ * Max map-% per animation frame — ~match sim (~0.02 per 50ms ≈ 0.012 per frame at 60fps).
+ * Walls are enforced in simulation only; display eases smoothly toward sim position.
+ */
+export const MAX_DISPLAY_STEP = { resident: 0.011, staff: 0.011 } as const;
+
+const DISPLAY_SNAP_PCT = 0.008;
 
 export function smoothToward(current: MapPosition, target: MapPosition, maxStep: number): MapPosition {
   const dx = target.x - current.x;
   const dy = target.y - current.y;
   const d = Math.hypot(dx, dy);
-  if (d <= maxStep) return target;
+  if (d <= DISPLAY_SNAP_PCT || d <= maxStep) return target;
   return { x: current.x + (dx / d) * maxStep, y: current.y + (dy / d) * maxStep };
 }

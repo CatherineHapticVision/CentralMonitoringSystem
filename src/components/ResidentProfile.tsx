@@ -3,6 +3,7 @@ import type { ProfileAlert } from '../types/alerts';
 import { ProfilePhotoSlot } from './ProfilePhotoSlot';
 import { useProfilePhotos } from '../context/ProfilePhotoContext';
 import { staffNameForId } from '../data/facilityData';
+import { RespondingStaffLinks } from './RespondingStaffLinks';
 
 interface StaffMember {
   id: string;
@@ -54,7 +55,7 @@ export function ResidentProfile({ resident, onClose, onStaffClick }: ResidentPro
 
   const activeAlerts = resident.activeAlerts ?? [];
 
-  const heartRateStatus = resident.heartRate < 50 || resident.heartRate > 100 ? 'alert' : 'normal';
+  const heartRateStatus = resident.heartRate < 50 || resident.heartRate > 120 ? 'alert' : 'normal';
   const heartRateColor = heartRateStatus === 'alert' ? 'text-red-800' : 'text-emerald-700';
   const heartRateBg = heartRateStatus === 'alert' ? 'bg-white' : 'bg-emerald-50';
 
@@ -163,7 +164,7 @@ export function ResidentProfile({ resident, onClose, onStaffClick }: ResidentPro
               </p>
               {heartRateStatus === 'alert' && (
                 <p className="text-[10px] font-bold text-red-800 mt-0.5">
-                  {resident.heartRate < 50 ? 'Bradycardia' : 'Tachycardia'}
+                  {resident.heartRate < 50 ? 'Low heart rate' : 'High heart rate'}
                 </p>
               )}
             </div>
@@ -279,11 +280,28 @@ export function ResidentProfile({ resident, onClose, onStaffClick }: ResidentPro
                         <Users className="w-3 h-3 text-blue-700 shrink-0" />
                       )}
                       <span>
-                        {(alert.type === 'call' || alert.type === 'emergency') && alert.relatedStaffId
-                          ? `Responding: ${alert.relatedStaffId}${
-                              alert.acknowledgedAt ? ` — responded ${alert.acknowledgedAt}` : ' — not yet responded'
-                            }`
-                          : `Responding: ${alert.respondingStaff!.join(', ')}`}
+                        <span className="text-slate-600 font-bold uppercase">Assigned: </span>
+                        {(alert.type === 'call' || alert.type === 'emergency') && alert.relatedStaffId ? (
+                          <>
+                            <RespondingStaffLinks
+                              staffIds={[alert.relatedStaffId]}
+                              nameById={
+                                alert.relatedStaffName
+                                  ? { [alert.relatedStaffId]: alert.relatedStaffName }
+                                  : undefined
+                              }
+                              onStaffClick={onStaffClick}
+                            />
+                            {alert.acknowledgedAt
+                              ? ` — responded ${alert.acknowledgedAt}`
+                              : ' — not yet responded'}
+                          </>
+                        ) : (
+                          <RespondingStaffLinks
+                            staffIds={alert.respondingStaff!}
+                            onStaffClick={onStaffClick}
+                          />
+                        )}
                       </span>
                     </div>
                   ) : null}

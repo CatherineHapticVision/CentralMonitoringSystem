@@ -67,6 +67,22 @@ function wanderingRiskFor(person: Person): 'low' | 'medium' | 'high' {
   return 'low';
 }
 
+/** Primary nurse assigned to respond for a resident (optionally by live map floor). */
+export function primaryRespondingStaffIdForResident(
+  resident: Person,
+  staff: Person[],
+  floor?: number,
+): string {
+  const location =
+    floor !== undefined
+      ? floor === 4
+        ? 'Outdoor Grounds'
+        : `Floor ${floor}`
+      : resident.location;
+  const assigned = assignedStaffForResident({ ...resident, location }, staff);
+  return assigned[0]?.id ?? 'RN01';
+}
+
 function assignedStaffForResident(
   person: Person,
   staff: Person[],
@@ -174,17 +190,17 @@ const DEMO_STAFF_ALERTS: Partial<Record<string, StaffProfileData['activeAlerts']
       respondingStaff: ['RN01'],
     },
   ],
-  RN04: [
+  RN03: [
     {
       id: 'A004',
       residentId: 'R014',
       residentName: 'Thomas O\'Brien',
       type: 'heartrate',
-      severity: 'critical',
+      severity: 'high',
       time: '5 minutes ago',
       acknowledgedAt: '4m 22s ago',
       responseTime: 'Monitoring',
-      respondingStaff: ['RN04'],
+      respondingStaff: ['RN03'],
     },
   ],
 };
