@@ -508,9 +508,31 @@ function staffMovementStep(
   return stepTowardWithWalls(position, goal, maxStepPct, floor);
 }
 
-/** Block hall diagonals that cut through the physiotherapy north wall only. */
+/** Block hall diagonals that cut through blocked clinical facades. */
 function hallShortcutBlocked(position: Position, goal: Position, floor: number): boolean {
-  return floor === 1 && crossesPhysioNorthWall(position, goal);
+  if (floor === 1 && crossesPhysioNorthWall(position, goal)) return true;
+  return segmentCrossesPublicBlock(position, goal, floor);
+}
+
+/** True when a straight hall step would cross a clinical block (must use doors). */
+function segmentCrossesPublicBlock(
+  from: Position,
+  to: Position,
+  floor: number,
+): boolean {
+  if (!isPositionInHallway(from, floor) && !isPositionInHallway(to, floor)) {
+    return false;
+  }
+  const samples = 12;
+  for (let i = 1; i < samples; i++) {
+    const t = i / samples;
+    const p = {
+      x: from.x + (to.x - from.x) * t,
+      y: from.y + (to.y - from.y) * t,
+    };
+    if (isPositionInPublicInterior(p, floor)) return true;
+  }
+  return false;
 }
 
 function staffStoppedAtWall(from: Position, to: Position): boolean {
@@ -928,6 +950,18 @@ export function getStairWaypointId(personId: string): 'stairs_w' | 'stairs_e' {
   return personId.charCodeAt(personId.length - 1) % 2 === 0 ? 'stairs_w' : 'stairs_e';
 }
 
+/** Small ring offset so multiple people at the same elevator/stairs do not stack. */
+function transitSlotOffset(personId: string): Position {
+  let h = 0;
+  for (let i = 0; i < personId.length; i++) {
+    h = (h * 31 + personId.charCodeAt(i)) | 0;
+  }
+  const slot = Math.abs(h) % 6;
+  const angle = (slot / 6) * Math.PI * 2;
+  const r = 1.15;
+  return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+}
+
 export function getTransitHoldPosition(
   floor: number,
   personId: string,
@@ -940,7 +974,22 @@ export function getTransitHoldPosition(
   }
   const wpId = method === 'stairs' ? getStairWaypointId(personId) : getElevatorWaypointId(personId);
   const wp = waypointById(graph, wpId);
-  return wp ? { x: wp.x, y: wp.y } : { x: 20.7, y: 48.9 };
+  const base = wp ? { x: wp.x, y: wp.y } : { x: 20.7, y: 48.9 };
+  const off = transitSlotOffset(personId);
+  return { x: base.x + off.x, y: base.y + off.y };
+}
+
+/** True when position is at a room/public doorway (display should not ease through jambs). */
+export function isNearMapDoor(position: Position, floor: number): boolean {
+  const graph = getGraph(floor);
+  for (const door of doorWaypoints(graph)) {
+    const doorPos = { x: door.x, y: door.y };
+    const interior = waypointById(graph, door.id.replace('_door', '_in'));
+    if (!interior) continue;
+    const inPos = { x: interior.x, y: interior.y };
+    if (doorPairEngaged(position, doorPos, inPos)) return true;
+  }
+  return false;
 }
 
 export function tryStartFloorTransit(

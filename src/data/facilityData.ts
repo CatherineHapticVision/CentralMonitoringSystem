@@ -266,7 +266,7 @@ export function generateStaff(): Person[] {
 
     // Supervisors
     { id: 'SV01', name: 'Catherine Brown', status: 'normal', location: 'Office (Floor 1)', isMoving: false, lastSeen: '12m' },
-    { id: 'SV02', name: 'Richard Evans', status: 'normal', location: 'Nurse Station (Floor 2)', isMoving: false, lastSeen: '38m' },
+    { id: 'SV02', name: 'Richard Evans', status: 'normal', location: 'Lounge (Floor 2)', isMoving: false, lastSeen: '38m' },
 
     // Other roles
     { id: 'PT01', name: 'Laura Chen', status: 'normal', location: 'In Transit: F2 → F1 (Elevator)', isMoving: true, lastSeen: 'now' },
@@ -370,6 +370,22 @@ export function generateMapPeople(
     PS04: 'dining',
     RP02: 'rec',
     SV01: 'reception_in',
+    RN02: 'nurse_st',
+    RN04: 'rn_6_in',
+    RP01: 'hall_sw',
+    RP03: 'rn_11_in',
+    RP04: 'safe',
+    RP05: 'hall_sc',
+    PS01: 'rn_4_in',
+    PS02: 'rn_5_in',
+    PS03: 'rn_7_in',
+    PS05: 'rn_10_in',
+    PS06: 'rs_5_in',
+    PS07: 'hall_se',
+    PS08: 'rec_in',
+    SV02: 'lounge',
+    PT01: 'hall_nw',
+    OT01: 'rs_8_in',
   };
 
   for (const staffPos of staffPositions) {
@@ -377,7 +393,7 @@ export function generateMapPeople(
     if (staffMember) {
       const nav = createNavigationState(
         staffPos.floor,
-        undefined,
+        staffPos.position,
         staffSpawnWaypoint[staffPos.id],
       );
       mapPeople.push({

@@ -4,6 +4,7 @@ import { useProfilePhotos } from '../context/ProfilePhotoContext';
 import { useLoadedMarkerPhotos } from '../hooks/useLoadedMarkerPhotos';
 import type { FacilityAlert } from '../types/alerts';
 import { residentMarkerStatus } from '../types/alerts';
+import { isNearMapDoor } from '../data/mapNavigation';
 import { MAX_DISPLAY_STEP, smoothToward, type MapPosition } from '../utils/mapDisplayMotion';
 
 type Position = MapPosition;
@@ -164,15 +165,21 @@ export function FloorMap({
           continue;
         }
 
+        const snapDisplay =
+          Boolean(person.inTransit) || isNearMapDoor(target, floor);
+
+        if (snapDisplay) {
+          next[person.id] = target;
+          continue;
+        }
+
         const maxStep =
           person.type === 'staff' ? MAX_DISPLAY_STEP.staff : MAX_DISPLAY_STEP.resident;
         const dx = target.x - current.x;
         const dy = target.y - current.y;
         const d = Math.hypot(dx, dy);
         next[person.id] =
-          person.type === 'staff' && d < 0.028
-            ? target
-            : smoothToward(current, target, maxStep);
+          d < 0.028 ? target : smoothToward(current, target, maxStep);
       }
       smoothRef.current = next;
       setSmoothPositions({ ...next });

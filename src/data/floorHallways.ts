@@ -81,6 +81,27 @@ const FLOOR1_PUBLIC_INTERIORS: HallRect[] = [
   { x: 708, y: 428, w: 200, h: 252 },
 ];
 
+/** Floor 2 clinical wing — med, nurse station, staff, clean/soiled (not walkable corridor). */
+const FLOOR2_PUBLIC_INTERIORS: HallRect[] = [
+  { x: 348, y: 292, w: 108, h: 110 },
+  { x: 468, y: 292, w: 148, h: 110 },
+  { x: 628, y: 292, w: 96, h: 110 },
+  { x: 836, y: 292, w: 52, h: 110 },
+  { x: 898, y: 292, w: 52, h: 110 },
+];
+
+/** Floor 3 program spaces that sit inside corridor rectss. */
+const FLOOR3_PUBLIC_INTERIORS: HallRect[] = [
+  { x: 508, y: 272, w: 164, h: 78 },
+  { x: 428, y: 428, w: 148, h: 96 },
+];
+
+const PUBLIC_INTERIORS_BY_FLOOR: Record<number, HallRect[]> = {
+  1: FLOOR1_PUBLIC_INTERIORS,
+  2: FLOOR2_PUBLIC_INTERIORS,
+  3: FLOOR3_PUBLIC_INTERIORS,
+};
+
 function wingRoomInteriors(
   wing: typeof RESIDENTIAL_WING | typeof FLOOR3_WING,
   floor: 2 | 3,
@@ -142,22 +163,29 @@ export function isPositionInRoomInterior(
   return positionInRects(position, rects, 6);
 }
 
-/** True when position is inside a public/clinical space on floor 1. */
+function isInsidePublicBlock(
+  position: { x: number; y: number },
+  floor: number,
+): boolean {
+  const rects = PUBLIC_INTERIORS_BY_FLOOR[floor];
+  if (!rects) return false;
+  return positionInRects(position, rects, 6);
+}
+
+/** True when position is inside a public/clinical/program block (not corridor). */
 export function isPositionInPublicInterior(
   position: { x: number; y: number },
   floor: number,
 ): boolean {
-  if (floor !== 1) return false;
-  // Corridor shafts overlap public-space bounding boxes — halls win.
-  if (isPositionInHallway(position, floor)) return false;
-  return positionInRects(position, FLOOR1_PUBLIC_INTERIORS, 6);
+  return isInsidePublicBlock(position, floor);
 }
 
-/** True when position is inside a beige corridor (not a room or public block). */
+/** True when position is inside a beige corridor (not a room or clinical block). */
 export function isPositionInHallway(
   position: { x: number; y: number },
   floor: number,
 ): boolean {
+  if (isInsidePublicBlock(position, floor)) return false;
   const rects = HALL_BY_FLOOR[floor];
   if (!rects) return false;
   return positionInRects(position, rects, 4);
@@ -172,12 +200,13 @@ export function sharesWalkableInterior(
   if (isPositionInRoomInterior(a, floor) && isPositionInRoomInterior(b, floor)) {
     return true;
   }
-  if (floor === 1 && isPositionInPublicInterior(a, floor) && isPositionInPublicInterior(b, floor)) {
+  const publicRects = PUBLIC_INTERIORS_BY_FLOOR[floor];
+  if (publicRects && isInsidePublicBlock(a, floor) && isInsidePublicBlock(b, floor)) {
     const svgAx = (a.x / 100) * VIEWBOX.w;
     const svgAy = (a.y / 100) * VIEWBOX.h;
     const svgBx = (b.x / 100) * VIEWBOX.w;
     const svgBy = (b.y / 100) * VIEWBOX.h;
-    const rect = FLOOR1_PUBLIC_INTERIORS.find(
+    const rect = publicRects.find(
       (r) =>
         pointInRect(svgAx, svgAy, r, 6) &&
         pointInRect(svgBx, svgBy, r, 6),
